@@ -69,6 +69,7 @@ Keep the HTTP/OAuth/session/Dockerfile/CI identical in shape; only the backend c
 ## Known Pitfalls
 
 - `quick-xml` versions before 0.41 are affected by high-severity unbounded-allocation and quadratic-time XML parsing advisories. Keep it on 0.41 or newer and run `cargo audit` before every release; CardDAV responses are untrusted upstream input.
+- Forgejo Actions can fail during `Set up job` with no step logs when an immutable action commit is no longer advertised by the Forgejo action mirror. Verify every pinned revision with `git ls-remote https://forge.oddie.app/{owner}/{repo}.git` before release; update the pin to an advertised immutable commit rather than retrying the workflow unchanged.
 
 ## Probed facts (2026-08-17, do not re-derive)
 
