@@ -2,6 +2,13 @@
 
 This project follows semantic versioning.
 
+## [0.1.2] - 2026-08-19
+
+### Fixed
+
+- Use standalone BuildKit's Dockerfile frontend options for provenance and SBOM
+  attestations so tagged container publication completes successfully.
+
 ## [0.1.1] - 2026-08-19
 
 ### Security
