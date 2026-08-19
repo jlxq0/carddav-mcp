@@ -115,7 +115,7 @@ jobs:
           LOCAL_TAG="carddav-mcp:ci-${GITHUB_SHA::8}"
           IMPORT_CACHE_ARG=(--import-cache "type=registry,ref=${CACHE_REF}")
           EXPORT_CACHE_ARG=()
-          if [[ "$GITHUB_REF" == refs/tags/v* || "$GITHUB_REF" == refs/heads/main ]]; then
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
             EXPORT_CACHE_ARG=(--export-cache "type=registry,ref=${CACHE_REF},mode=max")
           fi
 

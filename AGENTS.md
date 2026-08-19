@@ -88,3 +88,6 @@ cargo test --all-features --locked
 - Standalone `buildctl` does not implement Buildx's `--attest` flag. Request
   provenance and SBOMs through Dockerfile frontend options instead:
   `--opt attest:provenance=mode=max` and `--opt attest:sbom=`.
+- A merge and its release tag can run concurrently. Do not let both jobs export
+  to the same registry cache reference: main owns cache export; tag builds only
+  import that cache before publishing the immutable release image.
