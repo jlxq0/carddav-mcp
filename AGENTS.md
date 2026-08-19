@@ -54,3 +54,34 @@ cargo test --all-features --locked
 - Stalwart `requireAudience` may accept only one resource indicator. Set
   `CARDDAV_MCP_STALWART_AUDIENCE` to the audience the DAV server actually
   accepts, and keep RFC 9728 `resource` as `{origin}/mcp`.
+- Unknown JWT `kid` values are attacker-controlled before authentication.
+  Serialize and rate-limit JWKS refresh attempts so they cannot amplify one
+  public request into one IdP request.
+- A retain-only cleanup pass is not a memory cap. OAuth state, token-bucket,
+  and other identity-keyed maps must enforce a hard maximum after expiry or
+  idle eviction.
+- `rmcp` 1.x collects streamable-HTTP JSON bodies before deserializing them.
+  Keep an outer `RequestBodyLimitLayer` on `/mcp`; tool-level field limits run
+  too late to protect process memory.
+- Reconstructed OAuth token responses must explicitly restore
+  `Cache-Control: no-store` and `Pragma: no-cache`; forwarding only the body
+  and content type drops the upstream credential-caching protection.
+- Public IdP, resource, and DAV URLs must use HTTPS. Permit cleartext HTTP only
+  for loopback development endpoints.
+- RustSec advisories can appear between an initial audit and final verification.
+  Always rerun `cargo audit` against the finished lockfile; do not rely on an
+  earlier clean result.
+- `CARDDAV_MCP_AUTHORIZATION_SERVER` is currently Logto-shaped: the code derives
+  `/auth`, `/token`, `/jwks`, and `/me` directly. Do not advertise arbitrary
+  OIDC-provider compatibility until discovery metadata drives those endpoints.
+- OAuth client redirects are deployment configuration, not compiled defaults.
+  Adding a URI to `deployed_allowlist_parses` does not enable it at runtime;
+  update the deployed `CARDDAV_MCP_OAUTH_REDIRECT_URIS` value and public examples
+  in the same change.
+- A clean RustSec audit does not cover the distroless runtime packages. Scan the
+  finished OCI image with Trivy, refresh the digest when fixes exist, and permit
+  an unfixed CVE only with a narrow reachability argument plus a dated review.
+- Trivy 0.74 expects an OCI image layout directory for `image --input`; it does
+  not auto-extract a BuildKit `type=oci` tar archive. Extract the archive before
+  scanning it, while retaining the tar for tools such as Syft that accept
+  `oci-archive:` inputs.

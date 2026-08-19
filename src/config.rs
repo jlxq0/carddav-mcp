@@ -234,15 +234,36 @@ fn validate_url(url: &str, key: &str) -> Result<()> {
     if !is_absolute_http_uri(url) {
         anyhow::bail!("{key} must be an absolute http(s) URL, got: {url}");
     }
+    let parsed = url::Url::parse(url).with_context(|| format!("invalid {key}: {url}"))?;
+    if parsed.scheme() == "http" && !is_loopback_host(parsed.host_str().unwrap_or_default()) {
+        anyhow::bail!("{key} must use https except for loopback development URLs, got: {url}");
+    }
     Ok(())
 }
 
 /// RFC 8707 resource indicator: absolute http(s) URI. Rejects bare tokens
 /// such as `stalwart` that Logto answers with `invalid_target`.
 pub fn is_absolute_http_uri(url: &str) -> bool {
-    (url.starts_with("https://") || url.starts_with("http://"))
-        && url.len() > "https://".len()
-        && !url.chars().any(char::is_whitespace)
+    if url.trim() != url || url.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    matches!(parsed.scheme(), "https" | "http")
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.fragment().is_none()
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn parse_rate_limit(key: &str, default: u32) -> Result<u32> {
@@ -329,6 +350,29 @@ mod tests {
             SocketAddr::from(([0, 0, 0, 0], 3000)),
         );
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn rejects_cleartext_non_loopback_service_urls() {
+        let err = Config::new(
+            "http://carddav-mcp.example.test",
+            "https://login.example.test",
+            "https://dav.example.test",
+            SocketAddr::from(([0, 0, 0, 0], 3000)),
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn allows_cleartext_loopback_urls_for_local_development() {
+        let config = Config::new(
+            "http://localhost:3000",
+            "http://127.0.0.1:4000/oidc",
+            "http://[::1]:8080",
+            SocketAddr::from(([127, 0, 0, 1], 3000)),
+        )
+        .unwrap();
+        assert_eq!(config.resource_url, "http://localhost:3000");
     }
 
     #[test]

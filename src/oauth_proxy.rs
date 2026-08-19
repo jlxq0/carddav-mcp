@@ -37,8 +37,10 @@ use crate::oauth_redirect::is_allowed_redirect_uri;
 /// How long a pending authorization (client redirect/state mapping) lives.
 #[allow(clippy::duration_suboptimal_units)] // `from_secs` is clearer than mins here
 const PENDING_TTL: Duration = Duration::from_secs(600);
-/// Soft cap on concurrent pending authorizations; sweep on overflow.
+/// Hard cap on concurrent pending authorizations.
 const PENDING_CAP: usize = 2048;
+/// Maximum downstream OAuth `state` retained in one pending authorization.
+const MAX_CLIENT_STATE_BYTES: usize = 4096;
 
 #[derive(Clone)]
 pub struct OAuthProxyState {
@@ -88,14 +90,19 @@ impl OAuthProxyState {
         }
     }
 
-    fn insert(&self, state: String, pending: Pending) {
-        if let Ok(mut g) = self.inner.pending.lock() {
-            if g.len() >= PENDING_CAP {
-                let now = Instant::now();
-                g.retain(|_, p| now.duration_since(p.created) < PENDING_TTL);
-            }
-            g.insert(state, pending);
+    fn insert(&self, state: String, pending: Pending) -> bool {
+        let Ok(mut g) = self.inner.pending.lock() else {
+            return false;
+        };
+        if g.len() >= PENDING_CAP {
+            let now = Instant::now();
+            g.retain(|_, p| now.duration_since(p.created) < PENDING_TTL);
         }
+        if g.len() >= PENDING_CAP {
+            return false;
+        }
+        g.insert(state, pending);
+        true
     }
 
     fn take(&self, state: &str) -> Option<Pending> {
@@ -169,16 +176,28 @@ pub async fn authorize(State(st): State<OAuthProxyState>, RawQuery(q): RawQuery)
         .iter()
         .find(|(k, _)| k == "state")
         .map(|(_, v)| v.clone());
+    if client_state
+        .as_ref()
+        .is_some_and(|state| state.len() > MAX_CLIENT_STATE_BYTES)
+    {
+        return (StatusCode::BAD_REQUEST, "state is too large\n").into_response();
+    }
 
     let proxy_state = random_state();
-    st.insert(
+    if !st.insert(
         proxy_state.clone(),
         Pending {
             client_redirect_uri,
             client_state,
             created: Instant::now(),
         },
-    );
+    ) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many pending authorizations; try again later\n",
+        )
+            .into_response();
+    }
 
     let mut saw_state = false;
     for (k, v) in &mut pairs {
@@ -280,6 +299,12 @@ pub async fn token(State(st): State<OAuthProxyState>, body: String) -> Response 
             Response::builder()
                 .status(status)
                 .header(header::CONTENT_TYPE, content_type)
+                // RFC 6749 section 5.1: responses containing tokens must never
+                // be stored by browsers or intermediary caches. Reassert these
+                // because this proxy reconstructs, rather than forwards, the
+                // upstream response headers.
+                .header(header::CACHE_CONTROL, "no-store")
+                .header(header::PRAGMA, "no-cache")
                 .body(Body::from(bytes))
                 .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
         }
@@ -293,6 +318,9 @@ pub async fn token(State(st): State<OAuthProxyState>, body: String) -> Response 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
     use super::*;
 
     #[test]
@@ -318,19 +346,48 @@ mod tests {
             vec!["https://claude.ai/cb".to_owned()],
             "https://r.test",
         );
-        st.insert(
+        assert!(st.insert(
             "abc".to_owned(),
             Pending {
                 client_redirect_uri: "https://claude.ai/cb".to_owned(),
                 client_state: Some("xyz".to_owned()),
                 created: Instant::now(),
             },
-        );
+        ));
         let p = st.take("abc").expect("present");
         assert_eq!(p.client_redirect_uri, "https://claude.ai/cb");
         assert_eq!(p.client_state.as_deref(), Some("xyz"));
         // consumed
         assert!(st.take("abc").is_none());
+    }
+
+    #[test]
+    fn pending_authorizations_never_exceed_the_hard_cap() {
+        let st = OAuthProxyState::new(
+            "https://l.test/oidc",
+            "https://r.test",
+            vec!["https://claude.ai/cb".to_owned()],
+            "https://r.test",
+        );
+        for index in 0..PENDING_CAP {
+            assert!(st.insert(
+                format!("state-{index}"),
+                Pending {
+                    client_redirect_uri: "https://claude.ai/cb".to_owned(),
+                    client_state: None,
+                    created: Instant::now(),
+                },
+            ));
+        }
+        assert!(!st.insert(
+            "overflow".to_owned(),
+            Pending {
+                client_redirect_uri: "https://claude.ai/cb".to_owned(),
+                client_state: None,
+                created: Instant::now(),
+            },
+        ));
+        assert_eq!(st.inner.pending.lock().unwrap().len(), PENDING_CAP);
     }
 
     #[tokio::test]
@@ -432,6 +489,56 @@ mod tests {
             "grant_type=authorization_code&code=abc&code_verifier=v".to_owned(),
         )
         .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn token_response_is_never_cacheable() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"access_token": "redacted"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let st = OAuthProxyState::new(
+            &server.uri(),
+            "https://carddav-mcp.example.test",
+            vec!["https://claude.ai/cb".to_owned()],
+            "https://carddav-mcp.example.test",
+        );
+
+        let response = token(
+            State(st),
+            "grant_type=refresh_token&refresh_token=opaque".to_owned(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(response.headers()[header::PRAGMA], "no-cache");
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_oversized_client_state() {
+        let st = OAuthProxyState::new(
+            "https://login.example.test/oidc",
+            "https://carddav-mcp.example.test",
+            vec!["https://claude.ai/cb".to_owned()],
+            "https://carddav-mcp.example.test",
+        );
+        let state = "x".repeat(MAX_CLIENT_STATE_BYTES + 1);
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("client_id", "abc")
+            .append_pair("redirect_uri", "https://claude.ai/cb")
+            .append_pair("state", &state)
+            .finish();
+
+        let response = authorize(State(st), RawQuery(Some(query))).await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
