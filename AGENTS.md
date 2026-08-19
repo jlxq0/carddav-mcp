@@ -54,3 +54,20 @@ cargo test --all-features --locked
 - Stalwart `requireAudience` may accept only one resource indicator. Set
   `CARDDAV_MCP_STALWART_AUDIENCE` to the audience the DAV server actually
   accepts, and keep RFC 9728 `resource` as `{origin}/mcp`.
+- Unknown JWT `kid` values are attacker-controlled before authentication.
+  Serialize and rate-limit JWKS refresh attempts so they cannot amplify one
+  public request into one IdP request.
+- A retain-only cleanup pass is not a memory cap. OAuth state, token-bucket,
+  and other identity-keyed maps must enforce a hard maximum after expiry or
+  idle eviction.
+- `rmcp` 1.x collects streamable-HTTP JSON bodies before deserializing them.
+  Keep an outer `RequestBodyLimitLayer` on `/mcp`; tool-level field limits run
+  too late to protect process memory.
+- Reconstructed OAuth token responses must explicitly restore
+  `Cache-Control: no-store` and `Pragma: no-cache`; forwarding only the body
+  and content type drops the upstream credential-caching protection.
+- Public IdP, resource, and DAV URLs must use HTTPS. Permit cleartext HTTP only
+  for loopback development endpoints.
+- RustSec advisories can appear between an initial audit and final verification.
+  Always rerun `cargo audit` against the finished lockfile; do not rely on an
+  earlier clean result.

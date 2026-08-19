@@ -32,7 +32,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
+use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::info;
 
 use crate::auth::{AccessToken, AuthState, bearer_auth};
@@ -42,6 +42,13 @@ use crate::logto_oidc::LogtoValidationClient;
 use crate::mcp::CardDavMcpService;
 use crate::oauth_metadata::{authorization_server_metadata, protected_resource_metadata, register};
 use crate::rate_limit::{InitializeLimiter, Limiter, MAX_INITIALIZES_PER_IDENTITY};
+
+/// Maximum accepted streamable-HTTP MCP request body.
+///
+/// The largest generated vCard is 256 KiB; 1 MiB leaves ample room for JSON-RPC
+/// framing and future tool parameters while preventing `rmcp` from collecting
+/// an unbounded body into memory before deserialisation.
+const MAX_MCP_REQUEST_BYTES: usize = 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -137,6 +144,9 @@ fn build_router(
             auth_state.clone(),
             bearer_auth,
         ))
+        // Keep this outermost within `mcp_routes`: oversized requests must be
+        // rejected before JWT validation or rmcp's whole-body collection.
+        .layer(RequestBodyLimitLayer::new(MAX_MCP_REQUEST_BYTES))
         .with_state(auth_state);
 
     Router::new()
@@ -335,6 +345,25 @@ mod tests {
             .to_str()
             .unwrap();
         assert!(authenticate.contains("oauth-protected-resource/mcp"));
+    }
+
+    #[tokio::test]
+    async fn oversized_mcp_body_is_rejected_before_authentication() {
+        let response = router(test_config())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(
+                        axum::http::header::CONTENT_LENGTH,
+                        (MAX_MCP_REQUEST_BYTES + 1).to_string(),
+                    )
+                    .body(Body::from(vec![b'x'; MAX_MCP_REQUEST_BYTES + 1]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]

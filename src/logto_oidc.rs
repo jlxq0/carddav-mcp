@@ -32,13 +32,19 @@ use tracing::{debug, warn};
 #[allow(clippy::duration_suboptimal_units)]
 const MAX_CACHE_TTL: Duration = Duration::from_secs(60);
 
-/// Soft cap on the validation cache size; sweep expired entries on overflow.
-const CACHE_SOFT_CAP: usize = 256;
+/// Hard cap on the validation cache size; sweep expired entries before
+/// evicting the entry nearest expiry.
+const CACHE_CAP: usize = 256;
 
 /// JWKS cache lifetime. Refetched on unknown `kid` regardless (key rotation).
 /// `from_secs` not `from_hours`: the unit constructors are unstable on 1.93.
 #[allow(clippy::duration_suboptimal_units)]
 const JWKS_TTL: Duration = Duration::from_secs(3600);
+/// Minimum interval between outbound JWKS refresh attempts. Unknown attacker-
+/// controlled `kid` values must not turn one unauthenticated request into one
+/// `IdP` request. A short interval still discovers legitimate key rotation
+/// promptly.
+const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Claims we read off a Logto access token. Logto always emits `sub`, `aud`,
 /// `iss`, `exp`, `iat`. `email`/`name`/`username` are present only when the
@@ -107,6 +113,7 @@ pub struct LogtoValidationClient {
     expected_audiences: Vec<String>,
     expected_issuer: String,
     jwks: Arc<RwLock<JwksCache>>,
+    jwks_refresh_gate: Arc<tokio::sync::Mutex<()>>,
     cache: Arc<RwLock<HashMap<[u8; 32], CacheEntry>>>,
 }
 
@@ -124,6 +131,7 @@ impl std::fmt::Debug for LogtoValidationClient {
 struct JwksCache {
     keys: HashMap<String, DecodingKey>,
     fetched_at: Option<Instant>,
+    last_refresh_attempt: Option<Instant>,
 }
 
 #[derive(Clone)]
@@ -154,6 +162,7 @@ impl LogtoValidationClient {
             expected_audiences,
             expected_issuer: issuer,
             jwks: Arc::new(RwLock::new(JwksCache::default())),
+            jwks_refresh_gate: Arc::new(tokio::sync::Mutex::new(())),
             cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -262,7 +271,30 @@ impl LogtoValidationClient {
                 return Ok(Some(k.clone()));
             }
         }
-        // Slow path: refetch JWKS (handles both stale cache and unknown kid).
+
+        // Slow path: serialize refreshes, then re-check because another task
+        // may have populated the key while this task waited. Without the gate,
+        // a burst of attacker-chosen unknown kids causes a matching burst of
+        // outbound JWKS requests.
+        let _refresh_guard = self.jwks_refresh_gate.lock().await;
+        if let Ok(g) = self.jwks.read() {
+            let fresh = g.fetched_at.is_some_and(|t| t.elapsed() < JWKS_TTL);
+            if fresh && let Some(k) = g.keys.get(kid) {
+                return Ok(Some(k.clone()));
+            }
+            if g.last_refresh_attempt
+                .is_some_and(|t| t.elapsed() < JWKS_MIN_REFRESH_INTERVAL)
+            {
+                // During the cooldown, a previously known stale key remains a
+                // safe verification key; an unknown kid fails closed.
+                return Ok(g.keys.get(kid).cloned());
+            }
+        }
+
+        if let Ok(mut g) = self.jwks.write() {
+            // Record before the network await so failures are rate-limited too.
+            g.last_refresh_attempt = Some(Instant::now());
+        }
         self.refresh_jwks().await?;
         Ok(self.jwks.read().ok().and_then(|g| g.keys.get(kid).cloned()))
     }
@@ -312,9 +344,18 @@ impl LogtoValidationClient {
         let Ok(mut guard) = self.cache.write() else {
             return;
         };
-        if guard.len() >= CACHE_SOFT_CAP {
+        if guard.len() >= CACHE_CAP {
             let now = Instant::now();
             guard.retain(|_, e| e.expires_at > now);
+        }
+        if guard.len() >= CACHE_CAP
+            && !guard.contains_key(&key)
+            && let Some(expiring_key) = guard
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(key, _)| *key)
+        {
+            guard.remove(&expiring_key);
         }
         guard.insert(key, entry);
     }
@@ -338,6 +379,9 @@ fn now_unix() -> i64 {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
     use super::*;
 
     #[test]
@@ -369,5 +413,76 @@ mod tests {
         .unwrap();
         // Not a JWT — decode_header fails, no network touched.
         assert!(c.validate_token("opaque-abc123").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_kids_share_one_rate_limited_jwks_refresh() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = LogtoValidationClient::new(&server.uri(), vec!["https://res".into()]).unwrap();
+
+        let results = futures::future::join_all((0..20).map(|index| {
+            let client = client.clone();
+            async move {
+                client
+                    .decoding_key_for(&format!("attacker-kid-{index}"))
+                    .await
+                    .unwrap()
+            }
+        }))
+        .await;
+        assert!(results.into_iter().all(|key| key.is_none()));
+    }
+
+    #[tokio::test]
+    async fn refresh_cooldown_keeps_a_previously_known_key_usable() {
+        let client = LogtoValidationClient::new(
+            "https://login.example.test/oidc",
+            vec!["https://res".into()],
+        )
+        .unwrap();
+        {
+            let mut cache = client.jwks.write().unwrap();
+            cache.keys.insert(
+                "known".to_owned(),
+                DecodingKey::from_secret(b"test-only-key"),
+            );
+            cache.fetched_at = Some(
+                Instant::now()
+                    .checked_sub(JWKS_TTL + Duration::from_secs(1))
+                    .unwrap(),
+            );
+            cache.last_refresh_attempt = Some(Instant::now());
+        }
+
+        assert!(client.decoding_key_for("known").await.unwrap().is_some());
+    }
+
+    #[test]
+    fn positive_validation_cache_never_exceeds_its_hard_cap() {
+        let client = LogtoValidationClient::new(
+            "https://login.example.test/oidc",
+            vec!["https://res".into()],
+        )
+        .unwrap();
+        let identity = AuthenticatedIdentity {
+            user_id: "user".to_owned(),
+            email: None,
+            name: None,
+            exp: None,
+        };
+        for index in 0..(CACHE_CAP + 10) {
+            let mut key = [0_u8; 32];
+            key[..8].copy_from_slice(&u64::try_from(index).unwrap().to_be_bytes());
+            client.cache_insert(key, &identity, None);
+        }
+        assert_eq!(client.cache.read().unwrap().len(), CACHE_CAP);
     }
 }

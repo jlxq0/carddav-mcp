@@ -22,7 +22,7 @@ use tracing::{debug, warn};
 
 #[allow(clippy::duration_suboptimal_units)]
 const DISCOVERY_TTL: Duration = Duration::from_secs(3600);
-const DISCOVERY_SOFT_CAP: usize = 256;
+const DISCOVERY_CAP: usize = 256;
 const ERROR_SNIPPET_BYTES: usize = 4096;
 
 const CURRENT_USER_PRINCIPAL_BODY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -554,8 +554,17 @@ impl CardDavClient {
         let Ok(mut cache) = self.discoveries.write() else {
             return;
         };
-        if cache.len() >= DISCOVERY_SOFT_CAP {
+        if cache.len() >= DISCOVERY_CAP {
             cache.retain(|_, entry| entry.cached_at.elapsed() < DISCOVERY_TTL);
+        }
+        if cache.len() >= DISCOVERY_CAP
+            && !cache.contains_key(&key)
+            && let Some(oldest_key) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.cached_at)
+                .map(|(key, _)| *key)
+        {
+            cache.remove(&oldest_key);
         }
         cache.insert(
             key,
@@ -965,5 +974,20 @@ mod tests {
         let client = CardDavClient::new(&server.uri(), None, 1024 * 1024).unwrap();
         let error = client.discover("rejected-token").await.unwrap_err();
         assert!(matches!(error, CardDavError::Unauthorized));
+    }
+
+    #[test]
+    fn discovery_cache_never_exceeds_its_hard_cap() {
+        let client = CardDavClient::new("https://dav.example.test", None, 1024).unwrap();
+        let discovery = DavDiscovery {
+            principal_href: "/principals/user/".to_owned(),
+            addressbook_home_href: "/dav/card/user/".to_owned(),
+        };
+        for index in 0..(DISCOVERY_CAP + 10) {
+            let mut key = [0_u8; 32];
+            key[..8].copy_from_slice(&u64::try_from(index).unwrap().to_be_bytes());
+            client.discovery_insert(key, &discovery);
+        }
+        assert_eq!(client.discoveries.read().unwrap().len(), DISCOVERY_CAP);
     }
 }
