@@ -1,0 +1,23 @@
+services:
+  carddav-mcp:
+    image: forge.oddie.app/jlxq0/carddav-mcp:v0.1.1
+    platform: linux/amd64
+    environment:
+      CARDDAV_MCP_RESOURCE_URL: ${CARDDAV_MCP_RESOURCE_URL:?set in .env}
+      CARDDAV_MCP_AUTHORIZATION_SERVER: ${CARDDAV_MCP_AUTHORIZATION_SERVER:?set in .env}
+      CARDDAV_MCP_STALWART_DAV_BASE_URL: ${CARDDAV_MCP_STALWART_DAV_BASE_URL:?set in .env}
+      CARDDAV_MCP_DCR_CLIENT_ID: ${CARDDAV_MCP_DCR_CLIENT_ID:-}
+      CARDDAV_MCP_OAUTH_REDIRECT_URIS: ${CARDDAV_MCP_OAUTH_REDIRECT_URIS:?set in .env}
+      CARDDAV_MCP_STALWART_AUDIENCE: ${CARDDAV_MCP_STALWART_AUDIENCE:-}
+      CARDDAV_MCP_METRICS_BIND_ADDR: 0.0.0.0:9090
+      CARDDAV_MCP_LOG_FORMAT: ${CARDDAV_MCP_LOG_FORMAT:-json}
+      RUST_LOG: ${RUST_LOG:-carddav_mcp=info,tower_http=info,info}
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

@@ -182,7 +182,10 @@ fn build_router(
 }
 
 async fn health() -> impl IntoResponse {
-    (StatusCode::OK, "ok\n")
+    axum::Json(serde_json::json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 /// Rate-limit only fresh streamable-HTTP sessions. Calls within the newly
@@ -323,6 +326,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["status"], "healthy");
+        assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[tokio::test]
