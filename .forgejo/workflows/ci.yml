@@ -147,8 +147,8 @@ jobs:
               --local dockerfile=. \
               --opt platform=linux/amd64 \
               "${IMPORT_CACHE_ARG[@]}" \
-              --attest type=provenance,mode=max \
-              --attest type=sbom \
+              --opt attest:provenance=mode=max \
+              --opt attest:sbom= \
               --metadata-file /tmp/carddav-mcp-build-metadata.json \
               --output "type=image,\"name=${TAGS}\",push=true"
             jq -e -r '."containerimage.digest"' \

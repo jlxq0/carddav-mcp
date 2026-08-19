@@ -85,3 +85,6 @@ cargo test --all-features --locked
   not auto-extract a BuildKit `type=oci` tar archive. Extract the archive before
   scanning it, while retaining the tar for tools such as Syft that accept
   `oci-archive:` inputs.
+- Standalone `buildctl` does not implement Buildx's `--attest` flag. Request
+  provenance and SBOMs through Dockerfile frontend options instead:
+  `--opt attest:provenance=mode=max` and `--opt attest:sbom=`.
