@@ -14,9 +14,10 @@ RUN mkdir src && \
     rm -rf src target/release/deps/carddav_mcp* target/release/carddav-mcp*
 
 COPY src ./src
-RUN cargo build --release --locked
+RUN cargo build --release --locked && \
+    ! ldd target/release/carddav-mcp | grep -E 'libssl|libcrypto'
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:e2d29aec8061843706b7e484c444f78fafb05bfe47745505252b1769a05d14f1
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:adcd20c7b4c988b73cbfbddb26d2eee574571e6d7c9ffea29b3821e0690efb77
 
 WORKDIR /app
 COPY --from=builder /build/target/release/carddav-mcp /app/carddav-mcp

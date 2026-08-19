@@ -11,6 +11,8 @@ This project follows semantic versioning.
 - Restore OAuth token-response anti-caching headers.
 - Require HTTPS for public service dependencies and update the vulnerable `h2`
   dependency.
+- Refresh the pinned distroless runtime and gate releases on high/critical
+  container findings.
 
 ### Added
 

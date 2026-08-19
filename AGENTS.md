@@ -78,3 +78,6 @@ cargo test --all-features --locked
   Adding a URI to `deployed_allowlist_parses` does not enable it at runtime;
   update the deployed `CARDDAV_MCP_OAUTH_REDIRECT_URIS` value and public examples
   in the same change.
+- A clean RustSec audit does not cover the distroless runtime packages. Scan the
+  finished OCI image with Trivy, refresh the digest when fixes exist, and permit
+  an unfixed CVE only with a narrow reachability argument plus a dated review.

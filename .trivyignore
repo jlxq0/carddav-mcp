@@ -1,0 +1,5 @@
+# The distroless runtime carries libssl3, but carddav-mcp uses rustls and the
+# Docker build fails if its ELF binary links libssl or libcrypto. CVE-2026-14456
+# is confined to the OpenSSL QUIC server path, which this process cannot reach.
+# No fixed Debian package exists as of 2026-08-19. Reassess by 2026-09-30.
+CVE-2026-14456
