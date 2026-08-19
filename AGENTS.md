@@ -81,3 +81,7 @@ cargo test --all-features --locked
 - A clean RustSec audit does not cover the distroless runtime packages. Scan the
   finished OCI image with Trivy, refresh the digest when fixes exist, and permit
   an unfixed CVE only with a narrow reachability argument plus a dated review.
+- Trivy 0.74 expects an OCI image layout directory for `image --input`; it does
+  not auto-extract a BuildKit `type=oci` tar archive. Extract the archive before
+  scanning it, while retaining the tar for tools such as Syft that accept
+  `oci-archive:` inputs.

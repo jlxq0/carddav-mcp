@@ -129,7 +129,9 @@ jobs:
             "${EXPORT_CACHE_ARG[@]}" \
             --output "type=oci,dest=/tmp/carddav-mcp.oci.tar,name=${LOCAL_TAG}"
 
-          trivy image --input /tmp/carddav-mcp.oci.tar \
+          mkdir -p /tmp/carddav-mcp.oci
+          tar -xf /tmp/carddav-mcp.oci.tar -C /tmp/carddav-mcp.oci
+          trivy image --input /tmp/carddav-mcp.oci \
             --severity HIGH,CRITICAL --exit-code 1
           trivy config . --severity HIGH,CRITICAL --exit-code 1
           syft "oci-archive:/tmp/carddav-mcp.oci.tar" \
