@@ -29,7 +29,7 @@ use tracing::{debug, warn};
 /// Maximum age of a cached positive validation. Bounded so a token
 /// revocation (Logto session end) propagates in at most this window even
 /// though local JWT verification can't see revocations directly.
-#[allow(clippy::duration_suboptimal_units)]
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 const MAX_CACHE_TTL: Duration = Duration::from_secs(60);
 
 /// Hard cap on the validation cache size; sweep expired entries before
@@ -38,7 +38,7 @@ const CACHE_CAP: usize = 256;
 
 /// JWKS cache lifetime. Refetched on unknown `kid` regardless (key rotation).
 /// `from_secs` not `from_hours`: the unit constructors are unstable on 1.93.
-#[allow(clippy::duration_suboptimal_units)]
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 const JWKS_TTL: Duration = Duration::from_secs(3600);
 /// Minimum interval between outbound JWKS refresh attempts. Unknown attacker-
 /// controlled `kid` values must not turn one unauthenticated request into one

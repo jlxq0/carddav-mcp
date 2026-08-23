@@ -709,6 +709,10 @@ impl CardDavMcpService {
     }
 }
 
+// `tool_handler` generates the async trait method required by rmcp. Rust 1.98's
+// Clippy cannot see the awaited work inside that macro expansion and reports
+// `unused_async_trait_impl`; older supported compilers do not know the lint.
+#[allow(unknown_lints, clippy::unused_async_trait_impl)]
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CardDavMcpService {
     fn get_info(&self) -> ServerInfo {

@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tracing::{debug, warn};
 
-#[allow(clippy::duration_suboptimal_units)]
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 const DISCOVERY_TTL: Duration = Duration::from_secs(3600);
 const DISCOVERY_CAP: usize = 256;
 const ERROR_SNIPPET_BYTES: usize = 4096;

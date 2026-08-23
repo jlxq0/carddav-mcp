@@ -57,7 +57,7 @@ pub const MAX_INITIALIZES_PER_IDENTITY: u32 = 8;
 /// Maximum identities retained in any one rate-limit map.
 const MAX_BUCKETS_PER_MAP: usize = 4096;
 /// Idle buckets older than this are discarded first when a map reaches its cap.
-#[allow(clippy::duration_suboptimal_units)]
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 const BUCKET_IDLE_TTL: Duration = Duration::from_secs(3600);
 
 /// Limiter type alias — `governor`'s direct (non-keyed) variant; we
@@ -234,7 +234,7 @@ impl InitializeLimiter {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::duration_suboptimal_units)]
+#[allow(unknown_lints, clippy::unwrap_used, clippy::duration_suboptimal_units)]
 mod tests {
     use super::*;
 
