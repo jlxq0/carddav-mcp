@@ -121,6 +121,14 @@ Pin production images by both tag and digest. The official deployment uses a
 read-only root filesystem, drops every Linux capability, and allows egress only
 to DNS and HTTPS dependencies.
 
+Forgejo Actions runs formatting, Clippy, tests, dependency and secret checks,
+then builds and scans a Linux AMD64 OCI image. A `v*` tag publishes the versioned
+image and `latest` to `forge.oddie.app/jlxq0/carddav-mcp`, with CycloneDX,
+SPDX, and SLSA metadata. The production cluster is updated separately through
+the `oddie-apps/platform` GitOps repository; Renovate proposes the digest change
+and Argo CD applies it after that platform change is merged. This repository
+does not deploy directly to Kubernetes.
+
 ## Development
 
 Rust 1.93+ with edition 2024:
