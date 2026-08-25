@@ -314,6 +314,22 @@ mod tests {
             "https://localhost:8443/callback"
         ));
 
+        // The URL parser canonicalises the host before the loopback check, so
+        // `127.1` and `0177.0.0.1` reach the relaxation identically to
+        // `127.0.0.1`. Host spelling enforces nothing here: the entry-scheme
+        // guard is the whole control.
+        for entry in [
+            "https://127.0.0.1:8443/callback",
+            "https://127.1:8443/callback",
+            "https://0177.0.0.1:8443/callback",
+        ] {
+            let allowed = parse_allowlist(entry, "TEST").unwrap();
+            assert!(
+                !is_allowed_redirect_uri(&allowed, "http://127.0.0.1:3118/callback"),
+                "{entry} must not port-relax into cleartext"
+            );
+        }
+
         let private_entry = parse_allowlist("cursor://localhost/callback", "TEST").unwrap();
 
         assert!(!is_allowed_redirect_uri(
