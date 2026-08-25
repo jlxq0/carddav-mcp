@@ -292,19 +292,36 @@ mod tests {
         ));
     }
 
-    /// The allowlist entry's scheme is checked too. A private-use entry can
-    /// carry a loopback-looking host, and a cleartext candidate must not be
-    /// able to borrow its host and path by supplying any port.
+    /// The allowlist entry's scheme is checked too, and this is the dangerous
+    /// half. An `https` loopback entry also has a loopback host, so without the
+    /// check it port-relaxes into cleartext `http` — a TLS downgrade on an
+    /// entry the operator wrote expecting TLS, which is worse than the lockout
+    /// this change fixes. A private-use entry is the same defect, less severe.
     #[test]
     fn loopback_relaxation_checks_the_entry_scheme() {
-        let allowed = parse_allowlist("cursor://localhost/callback", "TEST").unwrap();
+        let https_entry = parse_allowlist("https://localhost:8443/callback", "TEST").unwrap();
 
         assert!(!is_allowed_redirect_uri(
-            &allowed,
+            &https_entry,
+            "http://localhost:3118/callback"
+        ));
+        assert!(!is_allowed_redirect_uri(
+            &https_entry,
+            "http://localhost:8443/callback"
+        ));
+        assert!(is_allowed_redirect_uri(
+            &https_entry,
+            "https://localhost:8443/callback"
+        ));
+
+        let private_entry = parse_allowlist("cursor://localhost/callback", "TEST").unwrap();
+
+        assert!(!is_allowed_redirect_uri(
+            &private_entry,
             "http://localhost:9999/callback"
         ));
         assert!(is_allowed_redirect_uri(
-            &allowed,
+            &private_entry,
             "cursor://localhost/callback"
         ));
     }
