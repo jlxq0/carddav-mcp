@@ -1,6 +1,6 @@
 services:
   carddav-mcp:
-    image: forge.oddie.app/jlxq0/carddav-mcp:v0.1.2
+    image: forge.oddie.app/jlxq0/carddav-mcp:v0.1.3
     platform: linux/amd64
     environment:
       CARDDAV_MCP_RESOURCE_URL: ${CARDDAV_MCP_RESOURCE_URL:?set in .env}
