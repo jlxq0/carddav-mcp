@@ -35,6 +35,11 @@ pub fn is_allowed_redirect_uri(allowed: &[String], uri: &str) -> bool {
 /// session. Scheme, host, path and query still have to match an allowlist
 /// entry exactly — only the port is free, and only for cleartext loopback.
 /// `https` and private-use entries stay byte-for-byte exact, port included.
+///
+/// The loopback-host check on the requested URI deliberately duplicates the one
+/// in `validate_redirect_uri`, so this function stays correct on its own rather
+/// than depending on its caller having validated first. No test can falsify it
+/// while `is_allowed_redirect_uri` validates before calling here.
 fn matches_loopback_entry(allowed: &[String], uri: &str) -> bool {
     let Ok(candidate) = Url::parse(uri) else {
         return false;
@@ -266,6 +271,41 @@ mod tests {
         assert!(!is_allowed_redirect_uri(
             &allowed,
             "http://localhost:3118/api/mcp/auth_callback"
+        ));
+    }
+
+    /// The requested URI's scheme is guarded, not only the entry's. Without
+    /// that check `https://localhost:3118/callback` would match a cleartext
+    /// loopback entry, and a client could be redirected somewhere the operator
+    /// never allowlisted.
+    #[test]
+    fn loopback_relaxation_checks_the_requested_scheme() {
+        let allowed = parse_allowlist("http://localhost:8787/callback", "TEST").unwrap();
+
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "https://localhost:3118/callback"
+        ));
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "cursor://localhost/callback"
+        ));
+    }
+
+    /// The allowlist entry's scheme is checked too. A private-use entry can
+    /// carry a loopback-looking host, and a cleartext candidate must not be
+    /// able to borrow its host and path by supplying any port.
+    #[test]
+    fn loopback_relaxation_checks_the_entry_scheme() {
+        let allowed = parse_allowlist("cursor://localhost/callback", "TEST").unwrap();
+
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:9999/callback"
+        ));
+        assert!(is_allowed_redirect_uri(
+            &allowed,
+            "cursor://localhost/callback"
         ));
     }
 
