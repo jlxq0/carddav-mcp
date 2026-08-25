@@ -21,8 +21,41 @@ pub fn parse_allowlist(raw: &str, key: &str) -> Result<Vec<String>> {
 }
 
 pub fn is_allowed_redirect_uri(allowed: &[String], uri: &str) -> bool {
-    validate_redirect_uri(uri, "redirect_uri").is_ok()
-        && allowed.iter().any(|allowed| allowed == uri)
+    if validate_redirect_uri(uri, "redirect_uri").is_err() {
+        return false;
+    }
+    if allowed.iter().any(|entry| entry == uri) {
+        return true;
+    }
+    matches_loopback_entry(allowed, uri)
+}
+
+/// RFC 8252 §7.3: the authorization server MUST allow any port for a loopback
+/// redirect URI, because a native client binds an ephemeral local port per
+/// session. Scheme, host, path and query still have to match an allowlist
+/// entry exactly — only the port is free, and only for cleartext loopback.
+/// `https` and private-use entries stay byte-for-byte exact, port included.
+fn matches_loopback_entry(allowed: &[String], uri: &str) -> bool {
+    let Ok(candidate) = Url::parse(uri) else {
+        return false;
+    };
+    if candidate.scheme() != "http" {
+        return false;
+    }
+    let Some(host) = candidate.host_str() else {
+        return false;
+    };
+    if !is_loopback_host(host) {
+        return false;
+    }
+    allowed.iter().any(|entry| {
+        Url::parse(entry).is_ok_and(|entry| {
+            entry.scheme() == "http"
+                && entry.host_str() == Some(host)
+                && entry.path() == candidate.path()
+                && entry.query() == candidate.query()
+        })
+    })
 }
 
 /// Loopback hosts accepted for cleartext `http://` redirect URIs
@@ -152,6 +185,88 @@ mod tests {
         ] {
             assert!(parse_allowlist(uri, "TEST").is_err(), "should reject {uri}");
         }
+    }
+
+    /// RFC 8252 §7.3 — a native client binds a random loopback port per
+    /// session, so an allowlisted loopback entry must match on any port.
+    #[test]
+    fn loopback_entry_matches_any_port() {
+        let allowed = parse_allowlist("http://localhost:8787/callback", "TEST").unwrap();
+
+        assert!(is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:3118/callback"
+        ));
+        assert!(is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:8787/callback"
+        ));
+        // No port at all is still port-agnostic loopback.
+        assert!(is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost/callback"
+        ));
+    }
+
+    /// The port is the only thing RFC 8252 §7.3 relaxes. Path, host and query
+    /// keep matching exactly.
+    #[test]
+    fn loopback_port_relaxation_does_not_relax_host_or_path() {
+        let allowed = parse_allowlist("http://localhost:8787/callback", "TEST").unwrap();
+
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:3118/other"
+        ));
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:3118/callback/extra"
+        ));
+        // A different loopback host must be allowlisted in its own right.
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "http://127.0.0.1:3118/callback"
+        ));
+        assert!(!is_allowed_redirect_uri(&allowed, "http://[::1]/callback"));
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:3118/callback?next=https://evil.example"
+        ));
+
+        let loopback_ip = parse_allowlist("http://127.0.0.1:8787/callback", "TEST").unwrap();
+        assert!(is_allowed_redirect_uri(
+            &loopback_ip,
+            "http://127.0.0.1:51423/callback"
+        ));
+        assert!(!is_allowed_redirect_uri(
+            &loopback_ip,
+            "http://localhost:51423/callback"
+        ));
+    }
+
+    /// The relaxation is loopback-`http`-only: an `https` or private-use entry
+    /// keeps exact matching, port included.
+    #[test]
+    fn non_loopback_entries_keep_exact_port_matching() {
+        let allowed = parse_allowlist(
+            "https://claude.ai/api/mcp/auth_callback,cursor://anysphere.cursor-mcp/oauth/callback",
+            "TEST",
+        )
+        .unwrap();
+
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "https://claude.ai:8443/api/mcp/auth_callback"
+        ));
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "cursor://anysphere.cursor-mcp:8443/oauth/callback"
+        ));
+        // And a loopback candidate cannot borrow a non-loopback entry's path.
+        assert!(!is_allowed_redirect_uri(
+            &allowed,
+            "http://localhost:3118/api/mcp/auth_callback"
+        ));
     }
 
     /// The exact set the deployment ships, parsed as one env value.

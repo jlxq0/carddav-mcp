@@ -95,3 +95,8 @@ cargo test --all-features --locked
   attribute macros. Verify with the same stable toolchain as Forgejo Actions;
   when the generated code is the false positive, allow only that lint at the
   macro site and pair it with `unknown_lints` for the minimum supported Rust.
+- Loopback redirect URIs cannot be matched by exact string equality. A native
+  client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
+  the server to accept any port for a loopback entry. Relax the port only for
+  cleartext `http` on a loopback host; scheme, host, path and query stay exact,
+  and `https` / private-use entries keep exact matching including the port.
