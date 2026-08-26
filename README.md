@@ -89,8 +89,13 @@ document at `/.well-known/oauth-authorization-server`.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | disabled | Enables OTLP tracing export. |
 
 Public resource, IdP, and DAV URLs must use HTTPS. Plain HTTP is accepted only
-for loopback development URLs. Redirect URIs are exact matches; HTTP callbacks
-are limited to loopback hosts.
+for loopback development URLs, and HTTP callbacks are limited to loopback hosts.
+
+Redirect URIs match exactly, with one exception: a cleartext loopback entry
+matches on any port, as RFC 8252 §7.3 requires, because a native client binds
+an ephemeral local port per session. Scheme, host, path and query still match
+exactly on both sides, so allowlist one loopback entry rather than one per
+port. `https` and private-use entries stay byte-for-byte exact, port included.
 
 ## Logto and Stalwart setup
 

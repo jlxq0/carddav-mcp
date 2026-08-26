@@ -12,7 +12,9 @@ Do not wrap third-party CardDAV MCP servers.
 - RFC 9728 resource = `{origin}/mcp`. Metadata at
   `/.well-known/oauth-protected-resource/mcp`.
 - `RESOURCE_URL` env = origin **without** `/mcp`.
-- Bring your own IdP (Logto or another OIDC provider).
+- Bring your own Logto instance. `/auth`, `/token`, `/jwks` and `/me` are
+  derived from the issuer, so arbitrary OIDC providers are not supported;
+  see the discovery-metadata pitfall below.
 - Validate inbound JWT (JWKS), forward that bearer verbatim to Stalwart.
 - Never accept or store Basic credentials or app passwords.
 - Never log tokens.
