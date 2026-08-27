@@ -84,6 +84,25 @@ pub async fn bearer_auth(
                     client_ip_resolved = client_ip.is_some(),
                     "recording last-used client IP"
                 );
+                // Deliberately unattributed: no `token_hash`, no user. The
+                // question it answers — does `trusted_proxy_hops` match the
+                // chain this pod is behind — is a property of the deployment
+                // and not of a request, so it needs no subject.
+                //
+                // Do not pair it with the `introspect` audit line by
+                // adjacency. Measured 2026-08-27 the two are 8 to 30 us apart
+                // and consecutive requests 1.5 to 26 ms apart, so today it
+                // works with a wide margin — but that margin is one serial
+                // client, not a property of this code, and two concurrent
+                // requests interleave without bound.
+                //
+                // Adding `token_hash` here would not repair that, which is the
+                // part worth knowing before someone tries it: every session
+                // mounting this server presents the same bearer, so one hash
+                // covers all of them and two concurrent requests would carry
+                // identical values. It identifies a credential, never a
+                // client. Pairing needs a per-request correlation id, or the
+                // count folded into the audit event itself.
                 state.last_used.record(&token_hash, client_ip);
             }
             // The rmcp streamable-http tower layer copies the request `Parts`
