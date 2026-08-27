@@ -110,6 +110,18 @@ cargo test --all-features --locked
   build a gate that a commit where nothing was built satisfies, and the rule
   itself records only what is required, never why the obvious second entry is
   missing.
+- **Whether that required context can ever go green is decided in
+  `.forgejo/workflows/ci.yml`, not in the protection rule.** `on.pull_request`
+  is bare today — no `paths:`, no `branches:` — so every pull-request head
+  produces `CI / cargo (pull_request)`. Add a filter and any PR the filter
+  excludes produces no `cargo` context at all, and the required context can
+  never report success: the gate turns from "requires green" into "cannot be
+  satisfied", with nothing in the protection settings having changed and
+  nothing in the rule pointing at the file that changed it. A docs-only PR
+  under a `paths:` filter is the likely first casualty. Answer this from the
+  `on:` block. Green PR contexts on past commits are corroboration after the
+  fact, and a repository with no pull-request history has none available at
+  all, while the `on:` block still answers.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
