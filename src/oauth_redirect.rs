@@ -343,8 +343,32 @@ mod tests {
     }
 
     /// The exact set the deployment ships, parsed as one env value.
+    /// Asserts that an allowlist mixing `https`, three private-use schemes and
+    /// a cleartext loopback entry parses to one entry each. That is the whole
+    /// of it: **the parser's scheme coverage, and nothing about any
+    /// deployment.**
+    ///
+    /// The literal is a copy of the value deployed on 2026-08-27, kept because
+    /// it happens to exercise every scheme the parser must accept. It is not
+    /// synchronised with anything. Nothing in this suite reads an environment
+    /// variable — `grep -n 'env::var' src/oauth_redirect.rs` is empty — so this
+    /// test cannot notice the deployed value dropping an entry (silently
+    /// breaking a client) or gaining one (silently enabling a redirect nobody
+    /// reviewed).
+    ///
+    /// Measured rather than asserted, and it is why this function was renamed:
+    /// under the old name `deployed_allowlist_parses`, adding
+    /// `https://attacker.example/callback` to the literal and bumping the count
+    /// to ten left **all ten tests in this module green**.
+    ///
+    /// Observing the deployed value would mean reading
+    /// `clusters/fondue/carddav-mcp/deployment.yaml` from `oddie-apps/platform`
+    /// and comparing: a different repository, a different pipeline, and a
+    /// network read from a unit test. **Not built, and probably not worth
+    /// building.** The defect this replaces was the name, which claimed the
+    /// check existed.
     #[test]
-    fn deployed_allowlist_parses() {
+    fn mixed_scheme_allowlist_parses_every_entry() {
         let raw = "https://claude.ai/api/mcp/auth_callback,\
                    https://claude.com/api/mcp/auth_callback,\
                    https://www.cursor.com/agents/mcp/oauth/callback,\

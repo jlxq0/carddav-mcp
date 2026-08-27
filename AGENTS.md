@@ -77,7 +77,7 @@ cargo test --all-features --locked
   `/auth`, `/token`, `/jwks`, and `/me` directly. Do not advertise arbitrary
   OIDC-provider compatibility until discovery metadata drives those endpoints.
 - OAuth client redirects are deployment configuration, not compiled defaults.
-  Adding a URI to `deployed_allowlist_parses` does not enable it at runtime;
+  No test observes the deployed allowlist, and none can from this repository;
   update the deployed `CARDDAV_MCP_OAUTH_REDIRECT_URIS` value and public examples
   in the same change.
 - A clean RustSec audit does not cover the distroless runtime packages. Scan the
