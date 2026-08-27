@@ -165,6 +165,20 @@ cargo test --all-features --locked
   appearance of attribution and none of the substance. A per-request
   correlation id, or folding the field into the audit event, is the fix if one
   is ever needed.
+- **When comparing a source literal against a live value, the fault will be in
+  the extraction, and its two outcomes cost differently.** Reading the
+  allowlist literal with `sed -n 'start,+9p'` swallowed the following
+  statement, so the comparison printed `DIFFER` against a deployed value that
+  was byte-identical. Bound the extraction to the literal — match
+  `let raw = "(.*?)";` and unescape the line continuations — rather than to a
+  line count that the next edit invalidates.
+- The mechanism is symmetric and the consequence is not: the same fault
+  printing `IDENTICAL` is never questioned, while `DIFFER` sends someone to
+  look and the fault surfaces in a minute. So the check has to be shown both
+  answers before it is believed — feed it a known-identical input and confirm
+  it says so, then a known-different one and confirm it disagrees. Reporting
+  each side's entry count beside the verdict is what made the first one
+  legible.
 - **The hop count's safety rests on a `parentRef` in `oddie-apps/platform`, and
   nothing here can assert it.** Each of the eight MCP HTTPRoutes has exactly one
   `parentRef`, `gateway/web`. Adding `gateway/home` makes that backend
