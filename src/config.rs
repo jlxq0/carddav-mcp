@@ -86,19 +86,38 @@ const DEFAULT_DAV_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 /// that configuration have to be re-derived together.
 ///
 /// A deployment **not** behind that edge must set
-/// `CARDDAV_MCP_TRUSTED_PROXY_HOPS`: reaching the pod through the LAN-only
-/// gateway alone presents one entry, and the default would then read a chain
-/// that is not there and record nothing.
+/// `CARDDAV_MCP_TRUSTED_PROXY_HOPS`: reaching the pod through the gateway
+/// alone presents one entry, and the default would then read a chain that is
+/// not there and record nothing.
 ///
 /// The same asymmetry is the residual risk here, found by cross-engine review
 /// of this change rather than by reasoning about it: a caller who **reaches
 /// the gateway directly**, bypassing the edge, has a real chain depth of 1, so
 /// their own `X-Forwarded-For` becomes the leftmost of two entries and this
-/// hop count selects it. It costs a stolen bearer plus LAN access to the
-/// gateway, and it puts a forged address in the audit field rather than
-/// granting anything. Recorded because the mitigation is not in this file:
-/// it is that the gateway is not reachable from outside the LAN, which is a
-/// fact about the cluster that nothing on this side asserts.
+/// hop count selects it, putting a forged address in the audit field.
+///
+/// It costs a stolen bearer **plus code running inside the cluster**, measured
+/// 2026-08-27 rather than assumed: from a pod, `203.24.209.5` and its v6
+/// address answer 401; from a machine on the house LAN both time out after 8 s
+/// on ports 80 and 443, while `https://carddav.kampong.social/` answers 401
+/// from the same machine as a control. The reason is `MetalLB`: the `fondue`
+/// pool holding `203.24.209.5/32` is a `BGPAdvertisement` peered across `sgp`,
+/// `lax` and `zrh`, and the L2 pool is a different address on `home-lan`, so
+/// a laptop on the wifi has no route to the gateway at all. At the point where
+/// someone runs code in this cluster, a forged provenance field is far from
+/// the worst thing available to them.
+///
+/// **The fact that makes it cheap is one line in another repository.** In
+/// `oddie-apps/platform`, this service's `HTTPRoute` has exactly one `parentRef`
+/// and it is `gateway/web`. Adding `gateway/home` to it makes this backend
+/// LAN-reachable with nothing else changing and nothing here reporting it, so
+/// that `parentRef` is where this paragraph can be broken.
+///
+/// And note which way it breaks. If the gateway does become reachable, **2 is
+/// worse than 1**: 1 selects an infrastructure address, wrong but inert, while
+/// 2 selects whatever the caller typed. The value that fixes the ordinary path
+/// is the value that makes the bypass path caller-controlled, so "set it to
+/// the edge-inclusive depth" is not the whole instruction.
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 2;
 
 #[derive(Debug, Clone)]
