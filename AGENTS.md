@@ -158,6 +158,21 @@ cargo test --all-features --locked
   appearance of attribution and none of the substance. A per-request
   correlation id, or folding the field into the audit event, is the fix if one
   is ever needed.
+- **The hop count's safety rests on a `parentRef` in `oddie-apps/platform`, and
+  nothing here can assert it.** Each of the eight MCP HTTPRoutes has exactly one
+  `parentRef`, `gateway/web`. Adding `gateway/home` makes that backend
+  LAN-reachable in one line with nothing else changing, and then a caller who
+  skips the edge has a real chain depth of 1 and can forge the leftmost
+  `X-Forwarded-For` entry. Today it costs code running inside the cluster:
+  measured 2026-08-27, the gateway answers 401 from a pod and times out from
+  the house LAN, because MetalLB advertises `203.24.209.5/32` over BGP to `sgp`,
+  `lax` and `zrh` while the L2 pool is a different address.
+- **If that ever changes, 2 is worse than 1 rather than merely wrong.** A hop
+  count of 1 selects an infrastructure address, incorrect and inert. A hop
+  count of 2 on a one-deep chain selects whatever the caller typed. The value
+  that fixes the ordinary path is the value that makes the bypass path
+  caller-controlled, so "set it to the edge-inclusive depth" reads as complete
+  and is not.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
