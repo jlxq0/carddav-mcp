@@ -89,6 +89,16 @@ const DEFAULT_DAV_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 /// `CARDDAV_MCP_TRUSTED_PROXY_HOPS`: reaching the pod through the LAN-only
 /// gateway alone presents one entry, and the default would then read a chain
 /// that is not there and record nothing.
+///
+/// The same asymmetry is the residual risk here, found by cross-engine review
+/// of this change rather than by reasoning about it: a caller who **reaches
+/// the gateway directly**, bypassing the edge, has a real chain depth of 1, so
+/// their own `X-Forwarded-For` becomes the leftmost of two entries and this
+/// hop count selects it. It costs a stolen bearer plus LAN access to the
+/// gateway, and it puts a forged address in the audit field rather than
+/// granting anything. Recorded because the mitigation is not in this file:
+/// it is that the gateway is not reachable from outside the LAN, which is a
+/// fact about the cluster that nothing on this side asserts.
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 2;
 
 #[derive(Debug, Clone)]
