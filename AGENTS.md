@@ -145,6 +145,19 @@ cargo test --all-features --locked
   must construct through the real path and take the number from the config, and
   it has to be checked in **both** directions — reverting to 1 and to 3 — or it
   is a tautology on the constant.
+- **Two log lines emitted microseconds apart are adjacent, not joined**, and
+  the gap that makes adjacency look safe is a property of the traffic rather
+  than of the code. The `introspect` audit line and the chain-length line are 8
+  to 30 us apart while consecutive requests are 1.5 to 26 ms apart, measured
+  2026-08-27 — a 50x margin produced by one serial client, which two concurrent
+  requests erase.
+- **`token_hash` would not fix that pairing here.** Every session mounting this
+  server presents the same bearer: 7 chain-length lines and 8 audit lines on
+  one pod resolved to **one** `token_hash` and one user. It identifies a
+  credential and never a client, so adding it to a second line buys the
+  appearance of attribution and none of the substance. A per-request
+  correlation id, or folding the field into the audit event, is the fix if one
+  is ever needed.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
