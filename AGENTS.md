@@ -97,6 +97,19 @@ cargo test --all-features --locked
   attribute macros. Verify with the same stable toolchain as Forgejo Actions;
   when the generated code is the false positive, allow only that lint at the
   macro site and pair it with `unknown_lints` for the minimum supported Rust.
+- `main` is protected: no direct push, admins included, `required_approvals: 0`,
+  and `CI / cargo*` must be green. The glob is load-bearing, because a branch
+  push posts `CI / cargo (push)` and a pull-request head posts
+  `CI / cargo (pull_request)` — two context names for one job.
+- **`CI / docker` is excluded from the required contexts on purpose. Do not add
+  it back.** It declares `needs: cargo`, and a job skipped because its
+  dependency failed still posts `success` to the commit status. Measured on five
+  commits in this repository — `9b9a0515`, `a70d6a8c`, `e2168769`, `419fd6bf`,
+  `b8aa2894` — each showing `CI / cargo` failure and `CI / docker` success one to
+  two seconds later, with no docker task in the run at all. Requiring it would
+  build a gate that a commit where nothing was built satisfies, and the rule
+  itself records only what is required, never why the obvious second entry is
+  missing.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
