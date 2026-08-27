@@ -11,7 +11,7 @@ use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use subtle::ConstantTimeEq;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::audit::{self, outcome};
 use crate::config::Config;
@@ -66,12 +66,23 @@ pub async fn bearer_auth(
                 identity.email.as_deref(),
             );
             if !is_introspect_path {
-                let client_ip = last_used::parse_client_ip(
-                    request
-                        .headers()
-                        .get("x-forwarded-for")
-                        .and_then(|v| v.to_str().ok()),
-                    state.config.trusted_proxy_hops,
+                let xff = request
+                    .headers()
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok());
+                let client_ip = last_used::parse_client_ip(xff, state.config.trusted_proxy_hops);
+                // The count and never the entries. The entries are client
+                // addresses, so logging them would put the value this record
+                // exists to protect into the line beside it. The count is the
+                // whole diagnostic: it is the only thing that says whether
+                // `trusted_proxy_hops` matches the chain this pod is actually
+                // behind, and without it the hop count is unfalsifiable from
+                // outside the deployment.
+                info!(
+                    xff_entries = last_used::xff_entry_count(xff),
+                    trusted_proxy_hops = state.config.trusted_proxy_hops,
+                    client_ip_resolved = client_ip.is_some(),
+                    "recording last-used client IP"
                 );
                 state.last_used.record(&token_hash, client_ip);
             }

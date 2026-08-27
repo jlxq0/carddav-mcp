@@ -122,6 +122,29 @@ cargo test --all-features --locked
   `on:` block. Green PR contexts on past commits are corroboration after the
   fact, and a repository with no pull-request history has none available at
   all, while the `on:` block still answers.
+- **A constant encoding another system's behaviour has to name that system
+  beside it, and be measurable from this one.** `DEFAULT_TRUSTED_PROXY_HOPS`
+  was 1 against a chain of 2 (`client -> Caddy edge -> Cilium gateway -> pod`),
+  so every authenticated request wrote the edge's address into the last-used
+  audit field as though it were the client's. Nothing failed, nothing was red,
+  and the value was well formed — an absent field is recoverable and a
+  confident wrong one in an audit record is not.
+- It is only correct while the **edge replaces** `X-Forwarded-For` rather than
+  appending. Do not treat a larger hop count as the safer choice: with one
+  appending proxy and a client that sends its own header, a count of 2 selects
+  the attacker's string, because the `len < hops` guard never fires. Re-derive
+  the number and the edge's `trusted_proxies` setting together or not at all.
+- **A hop count with no request-level log is unfalsifiable from outside the
+  deployment.** Log the *count* of `X-Forwarded-For` entries and never the
+  entries. Log it as a structured field: these logs are JSON, so
+  `grep 'trusted_proxy_hops=[0-9]'` matches nothing and reads exactly like a
+  service that logs nothing at all.
+- The suite can be strong and still aimed one layer inside the value the
+  deployment uses. Every `parse_client_ip` test passed a hop count explicitly,
+  so all of them stayed green at any default. A test that asserts the default
+  must construct through the real path and take the number from the config, and
+  it has to be checked in **both** directions — reverting to 1 and to 3 — or it
+  is a tautology on the constant.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for

@@ -82,7 +82,7 @@ document at `/.well-known/oauth-authorization-server`.
 | `CARDDAV_MCP_RATE_LIMIT_READS_PER_MIN` | no | `60` | Per-token and per-subject read quota. |
 | `CARDDAV_MCP_RATE_LIMIT_WRITES_PER_MIN` | no | `30` | Per-token and per-subject write quota. |
 | `CARDDAV_MCP_DAV_MAX_RESPONSE_BYTES` | no | `8388608` | Maximum accepted DAV response body. |
-| `CARDDAV_MCP_TRUSTED_PROXY_HOPS` | no | `1` | Trusted rightmost `X-Forwarded-For` hops. |
+| `CARDDAV_MCP_TRUSTED_PROXY_HOPS` | no | `2` | Trusted rightmost `X-Forwarded-For` hops. Must equal the measured length of your proxy chain. |
 | `CARDDAV_MCP_STALWART_CONNECT_IP` | no | DNS | Optional DAV DNS override while retaining Host/SNI. |
 | `CARDDAV_MCP_LOG_FORMAT` | no | text | Set to `json` for structured logs. |
 | `RUST_LOG` | no | application default | Tracing filter. |

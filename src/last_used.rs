@@ -123,9 +123,14 @@ impl LastUsedTracker {
 /// Instead, count `trusted_proxy_hops` entries in from the right. Each
 /// trusted proxy on the path is expected to *append* the IP it saw
 /// when the request arrived at it; the rightmost N entries are
-/// therefore the ones we trust. The default of 1 trusted proxy assumes
-/// a typical "ingress (Traefik / nginx / etc.) in front of the carddav-mcp
-/// pod" deployment; override via `CARDDAV_MCP_TRUSTED_PROXY_HOPS`.
+/// therefore the ones we trust. Counting from the right is what makes
+/// the selection position-stable: entries a client prepends cannot
+/// shift which one is chosen.
+///
+/// `trusted_proxy_hops` must be the **measured** length of that chain.
+/// See `DEFAULT_TRUSTED_PROXY_HOPS` in `config` for the deployed
+/// topology, for why a larger value is not a safer one, and for when a
+/// deployment has to override it with `CARDDAV_MCP_TRUSTED_PROXY_HOPS`.
 ///
 /// Returns `None` when the header is absent, has fewer entries than
 /// the trusted-hops count, or contains no parseable IP at the trusted
@@ -142,6 +147,18 @@ pub fn parse_client_ip(xff: Option<&str>, trusted_proxy_hops: usize) -> Option<I
     // proxies is the real client IP — i.e., index `len - trusted_proxy_hops`.
     let idx = len - trusted_proxy_hops;
     parts.get(idx)?.parse::<IpAddr>().ok()
+}
+
+/// Number of `X-Forwarded-For` entries the pod received, using the same
+/// split as `parse_client_ip` so a logged count describes exactly what the
+/// parser saw. Returns 0 when the header is absent.
+///
+/// This exists to be logged. **Log the count, never the entries** — the
+/// entries are client addresses and belong in no log line this service
+/// writes.
+#[must_use]
+pub fn xff_entry_count(xff: Option<&str>) -> usize {
+    xff.map_or(0, |raw| raw.split(',').count())
 }
 
 #[cfg(test)]
@@ -246,6 +263,21 @@ mod tests {
     fn parse_client_ip_returns_none_when_no_proxies_trusted() {
         // Defence-in-depth: trust_hops=0 means "don't read XFF at all".
         assert_eq!(parse_client_ip(Some("198.51.100.7"), 0), None);
+    }
+
+    /// The logged count has to describe what the parser saw, or an operator
+    /// reading it draws the wrong conclusion about the hop count. Same split,
+    /// so an empty entry counts for both.
+    #[test]
+    fn xff_entry_count_matches_what_the_parser_splits() {
+        assert_eq!(xff_entry_count(None), 0);
+        assert_eq!(xff_entry_count(Some("198.51.100.7")), 1);
+        assert_eq!(xff_entry_count(Some("198.51.100.7, 10.0.0.1")), 2);
+        // Empty entries are entries: the parser indexes past them too, so a
+        // count that skipped them would disagree with the value being logged
+        // beside it.
+        assert_eq!(xff_entry_count(Some(", , ,")), 4);
+        assert_eq!(xff_entry_count(Some("")), 1);
     }
 
     #[test]

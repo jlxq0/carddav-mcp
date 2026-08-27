@@ -2,6 +2,27 @@
 
 This project follows semantic versioning.
 
+## [0.1.4] - 2026-08-27
+
+### Fixed
+
+- Record the real client address in the last-used audit field. The trusted
+  proxy chain in front of this pod is `client -> Caddy edge -> Cilium gateway`,
+  two `X-Forwarded-For` entries, and `CARDDAV_MCP_TRUSTED_PROXY_HOPS` defaulted
+  to 1. `parse_client_ip` counts in from the right, so every authenticated
+  request recorded the edge's address as the gateway saw it: a well-formed
+  address identifying the wrong party, in the field an operator reads during an
+  incident. The default is now 2, with the topology and the reason recorded
+  beside the constant.
+
+### Added
+
+- One `info` line per authenticated request carrying `xff_entries`,
+  `trusted_proxy_hops` and `client_ip_resolved` — the **count** of
+  `X-Forwarded-For` entries and never the entries. Without it the hop count was
+  unfalsifiable from outside the deployment, and the value above had to be
+  taken from sibling services rather than measured here.
+
 ## [0.1.3] - 2026-08-25
 
 ### Fixed
