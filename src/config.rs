@@ -49,8 +49,9 @@ const ENV_RATE_LIMIT_WRITES: &str = "CARDDAV_MCP_RATE_LIMIT_WRITES_PER_MIN";
 /// one `addressbook-query` REPORT over a huge address book can pin. Default
 /// 8 MiB.
 const ENV_DAV_MAX_RESPONSE_BYTES: &str = "CARDDAV_MCP_DAV_MAX_RESPONSE_BYTES";
-/// Number of trusted proxies in front of carddav-mcp. Default 1 (the shared
-/// web Gateway behind the edge Caddy).
+/// Number of trusted proxies in front of carddav-mcp. See
+/// `DEFAULT_TRUSTED_PROXY_HOPS` for the measured chain and for why a
+/// deployment outside this cluster has to set it.
 const ENV_TRUSTED_PROXY_HOPS: &str = "CARDDAV_MCP_TRUSTED_PROXY_HOPS";
 /// Optional IP to connect to when reaching the Stalwart DAV host, overriding
 /// DNS. Keeps `Host`/SNI = the public hostname while dialling a specific IP.
@@ -63,7 +64,42 @@ const ENV_STALWART_AUDIENCE: &str = "CARDDAV_MCP_STALWART_AUDIENCE";
 const DEFAULT_RATE_LIMIT_READS: u32 = 60;
 const DEFAULT_RATE_LIMIT_WRITES: u32 = 30;
 const DEFAULT_DAV_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
-const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
+/// Length of the trusted proxy chain in front of this pod, measured
+/// 2026-08-27: **client -> Caddy edge -> Cilium gateway -> pod**, so the pod
+/// receives two `X-Forwarded-For` entries and the client is the leftmost.
+///
+/// Two is the **measured depth of that chain**, not a safety margin, and the
+/// distinction is the whole point. `parse_client_ip` counts in from the right,
+/// so a value above the real depth selects an entry no trusted proxy wrote:
+/// with one appending proxy and a client that sends `X-Forwarded-For: 1.2.3.4`
+/// the pod sees two entries, the `len < hops` guard never fires, and a hop
+/// count of 2 returns the attacker's own string into the audit record. Raising
+/// this number does not fail safe. Lowering it does not either — 1 selects the
+/// edge's address as the gateway saw it, which is a well-formed address
+/// identifying the wrong party.
+///
+/// The value is only correct while the **Caddy edge replaces**
+/// `X-Forwarded-For` rather than appending to it. Caddy sets no
+/// `trusted_proxies`, and its default is to trust no upstream and discard a
+/// client-supplied header, which is what keeps the leftmost entry unforgeable
+/// here. If `trusted_proxies` is ever configured at the edge, this number and
+/// that configuration have to be re-derived together.
+///
+/// A deployment **not** behind that edge must set
+/// `CARDDAV_MCP_TRUSTED_PROXY_HOPS`: reaching the pod through the LAN-only
+/// gateway alone presents one entry, and the default would then read a chain
+/// that is not there and record nothing.
+///
+/// The same asymmetry is the residual risk here, found by cross-engine review
+/// of this change rather than by reasoning about it: a caller who **reaches
+/// the gateway directly**, bypassing the edge, has a real chain depth of 1, so
+/// their own `X-Forwarded-For` becomes the leftmost of two entries and this
+/// hop count selects it. It costs a stolen bearer plus LAN access to the
+/// gateway, and it puts a forged address in the audit field rather than
+/// granting anything. Recorded because the mitigation is not in this file:
+/// it is that the gateway is not reachable from outside the LAN, which is a
+/// fact about the cluster that nothing on this side asserts.
+const DEFAULT_TRUSTED_PROXY_HOPS: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -334,6 +370,37 @@ mod tests {
             SocketAddr::from(([0, 0, 0, 0], 3000)),
         )
         .unwrap()
+    }
+
+    /// The deployed chain is client -> Caddy edge -> Cilium gateway -> pod,
+    /// so a config built without `CARDDAV_MCP_TRUSTED_PROXY_HOPS` must carry
+    /// 2. Every other test of the parser passes a hop count explicitly, which
+    /// means the suite would stay green with any default at all — this is the
+    /// only assertion that reads the value the deployment actually runs on.
+    #[test]
+    fn default_trusted_proxy_hops_matches_the_measured_chain() {
+        assert_eq!(cfg().trusted_proxy_hops, 2);
+    }
+
+    /// The consequence rather than the number. `parse_client_ip` counts in
+    /// from the right, so with the two entries this pod receives the default
+    /// must select the leftmost, which is the client as the edge saw it.
+    ///
+    /// The hop count comes from the config, never from a literal, so
+    /// reverting the constant reddens this too: at 1 it returns the gateway's
+    /// view of the edge, and at 3 the `len < hops` guard fires and it returns
+    /// `None`. Both are visible here as a changed value, not as a changed
+    /// argument.
+    #[test]
+    fn default_hops_selects_the_client_from_the_deployed_chain() {
+        // client, then the address the gateway saw the edge at.
+        let observed = "198.51.100.7, 10.0.0.1";
+        assert_eq!(
+            crate::last_used::parse_client_ip(Some(observed), cfg().trusted_proxy_hops),
+            Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                198, 51, 100, 7
+            ))),
+        );
     }
 
     #[test]
