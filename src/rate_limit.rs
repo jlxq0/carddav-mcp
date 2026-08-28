@@ -48,12 +48,42 @@ use governor::clock::DefaultClock;
 use governor::state::{InMemoryState, NotKeyed};
 use governor::{Quota, RateLimiter};
 
-/// Maximum number of fresh MCP sessions a single bearer token or Logto
-/// subject may open in a short burst. Legitimate Claude usage normally
-/// needs one or two live sessions; this leaves headroom for reconnects
-/// while preventing one authenticated identity from filling the global
-/// session pool (`session::MAX_SESSIONS`).
-pub const MAX_INITIALIZES_PER_IDENTITY: u32 = 8;
+/// Maximum number of fresh MCP sessions one Logto subject may open in a
+/// burst. **This is reconnect headroom, not the flood defence** — the flood
+/// defence is `session::MAX_SESSIONS`, which caps live sessions at 256
+/// regardless of what this allows.
+///
+/// It was 8, sized for "one or two live sessions" per the original comment,
+/// and that assumption is wrong here in two compounding ways measured
+/// 2026-08-28:
+///
+/// - **Every mounting session in this fleet authenticates as the same Logto
+///   subject.** Six distinct bearer hashes appeared in 12 hours and all of
+///   them carried one `sub`, so this is one bucket for every agent at once
+///   rather than one per client. There is no per-agent identity to key on.
+/// - **One client connection costs two charges.** `claude-code 2.1.248` posts
+///   twice without an `mcp-session-id` about 30 ms apart, creating two
+///   sessions, and only the second reaches `Service initialized as server`.
+///   Measured: 16 charged creates produced 5 usable sessions.
+///
+/// So 8 was four connections for the whole fleet. Eight agents restarting
+/// together want 16 charges, and half of them were refused. 32 covers one
+/// full-fleet restart plus a retry round, and remains an eighth of
+/// `MAX_SESSIONS`.
+pub const MAX_INITIALIZES_PER_IDENTITY: u32 = 32;
+/// How fast the initialize burst refills.
+///
+/// This used to be `session::SESSION_KEEP_ALIVE`, 30 minutes, on the
+/// reasoning that a filled quota should only reopen as fast as existing
+/// sessions idle out. That anchors *recovery* to the wrong quantity: after
+/// exhaustion a connection needs two tokens, so recovering one connection
+/// took an hour of total fleet silence, and retries spent each token as it
+/// arrived without ever reaching two. The bucket could not converge.
+///
+/// A minute bounds a stolen bearer to 60 session attempts an hour against a
+/// live-session cap of 256 and a 30-minute idle expiry, and lets a fleet that
+/// has exhausted the burst recover inside the time it takes anyone to notice.
+pub const INITIALIZE_REPLENISH: Duration = Duration::from_secs(60);
 /// Maximum identities retained in any one rate-limit map.
 const MAX_BUCKETS_PER_MAP: usize = 4096;
 /// Idle buckets older than this are discarded first when a map reaches its cap.
@@ -180,6 +210,30 @@ fn get_or_insert_with_quota(map: &BucketMap, key: &str, quota: Quota) -> Arc<Buc
     bucket
 }
 
+/// Which bucket refused an initialize request. Carried into the log line and
+/// the `bucket` label on `carddav_mcp_initialize_rejected_total`, because
+/// "rate limited" alone does not say whether one client is misbehaving or the
+/// shared per-subject bucket is too small for the fleet — the exact question
+/// that cost an evening on 2026-08-28.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectedBy {
+    /// The per-Logto-subject bucket, shared by every session of one user.
+    Subject,
+    /// The per-bearer bucket, used only for a token carrying no subject.
+    Bearer,
+}
+
+impl RejectedBy {
+    /// Stable metric-label and log-field value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Subject => "subject",
+            Self::Bearer => "bearer",
+        }
+    }
+}
+
 /// Rate limiter dedicated to fresh MCP session creation (the
 /// `initialize` request without an `mcp-session-id` header). Tool-call
 /// rate limits do not protect this path because rmcp allocates the
@@ -217,19 +271,35 @@ impl InitializeLimiter {
         }
     }
 
-    /// Check both per-bearer-hash and per-sub initialize buckets.
-    pub fn check(&self, bearer_hash: &str, sub: Option<&str>) -> Result<(), RateLimited> {
-        let bearer_bucket = get_or_insert_with_quota(&self.bearer, bearer_hash, self.quota);
-        if bearer_bucket.check().is_err() {
-            return Err(RateLimited);
-        }
-        if let Some(s) = sub {
-            let sub_bucket = get_or_insert_with_quota(&self.sub, s, self.quota);
-            if sub_bucket.check().is_err() {
-                return Err(RateLimited);
-            }
-        }
-        Ok(())
+    /// Charge exactly one bucket: the per-sub one when the token carries a
+    /// subject, the per-bearer one when it does not.
+    ///
+    /// **One charge per request, and never a charge in a bucket that then
+    /// refuses the request elsewhere.** The previous version charged the
+    /// bearer bucket and *then* tested the sub bucket, so a request the sub
+    /// bucket refused had already spent a bearer token. Under a retry storm
+    /// that spends tokens on every rejection, which is what turned a queue
+    /// into a livelock on 2026-08-28: the fleet consumed every refill without
+    /// completing a single connection.
+    ///
+    /// Nothing is given up by dropping the second charge. Both buckets carry
+    /// the same quota and many bearers map to one `sub`, so the sub bucket is
+    /// always the tighter of the two whenever a subject is present — a single
+    /// bearer exhausting its own bucket would have exhausted the shared one
+    /// first. The bearer bucket still stands alone for a token with no `sub`.
+    pub fn check(&self, bearer_hash: &str, sub: Option<&str>) -> Result<(), RejectedBy> {
+        sub.map_or_else(
+            || {
+                get_or_insert_with_quota(&self.bearer, bearer_hash, self.quota)
+                    .check()
+                    .map_err(|_| RejectedBy::Bearer)
+            },
+            |s| {
+                get_or_insert_with_quota(&self.sub, s, self.quota)
+                    .check()
+                    .map_err(|_| RejectedBy::Subject)
+            },
+        )
     }
 }
 
@@ -286,11 +356,68 @@ mod tests {
     }
 
     #[test]
-    fn initialize_limiter_denies_after_burst_on_bearer() {
+    fn initialize_limiter_denies_after_burst_and_names_the_subject_bucket() {
         let l = InitializeLimiter::new(Duration::from_secs(60), 2);
         l.check("h", Some("s")).unwrap();
         l.check("h", Some("s")).unwrap();
-        assert!(l.check("h", Some("s")).is_err());
+        assert_eq!(l.check("h", Some("s")), Err(RejectedBy::Subject));
+    }
+
+    /// The livelock, as a test. A refused request must not have spent
+    /// anything, or a retrying fleet burns every refill without ever
+    /// completing a connection.
+    ///
+    /// Two bearers share one subject and a burst of 1. The first request
+    /// takes the only token. The second is refused. The third, on a **third**
+    /// bearer, must still be refused by the subject bucket and not by a
+    /// bearer bucket that a refused request had already drained — under the
+    /// old charge-then-test order, `h2`'s rejected attempt had consumed its
+    /// own bearer token on the way to being refused.
+    #[test]
+    fn a_refused_initialize_spends_nothing() {
+        let l = InitializeLimiter::new(Duration::from_secs(3600), 1);
+        l.check("h1", Some("s")).unwrap();
+        assert_eq!(l.check("h2", Some("s")), Err(RejectedBy::Subject));
+        assert_eq!(l.check("h2", Some("s")), Err(RejectedBy::Subject));
+        // h2 never had a token taken from its own bucket, so with the subject
+        // dropped it is still at full burst.
+        l.check("h2", None).unwrap();
+    }
+
+    /// The property that actually failed on 2026-08-28 was recovery time, and
+    /// no test can observe it without a clock, so it is pinned as arithmetic
+    /// instead: a connection costs two charges, and a fleet that has drained
+    /// the burst must get one back in minutes rather than in an hour.
+    ///
+    /// Not a tautology on the constant — it encodes the requirement, and
+    /// fails for any period above 150 s, including the 30 minutes this was
+    /// anchored to before.
+    #[test]
+    fn a_drained_bucket_refills_one_connection_in_minutes() {
+        let one_connection = INITIALIZE_REPLENISH * 2;
+        assert!(
+            one_connection <= Duration::from_secs(300),
+            "recovering one connection takes {one_connection:?}; \
+             at that rate a retrying fleet spends each token before a second arrives"
+        );
+    }
+
+    /// The burst has to survive the thing that broke it: eight agents
+    /// reconnecting at once, each costing two charges because the client
+    /// posts twice without a session id.
+    #[test]
+    fn burst_covers_a_full_fleet_restart_at_two_charges_each() {
+        let l = InitializeLimiter::new(INITIALIZE_REPLENISH, MAX_INITIALIZES_PER_IDENTITY);
+        for agent in 0..8 {
+            for charge in 0..2 {
+                assert!(
+                    l.check(&format!("bearer{agent}"), Some("julian")).is_ok(),
+                    "agent {agent} charge {charge} refused; \
+                     MAX_INITIALIZES_PER_IDENTITY={MAX_INITIALIZES_PER_IDENTITY} \
+                     is under the 16 one fleet restart costs"
+                );
+            }
+        }
     }
 
     #[test]

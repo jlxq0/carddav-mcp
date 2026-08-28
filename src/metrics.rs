@@ -81,6 +81,25 @@ pub static INTROSPECT_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
     .expect("register introspect_total once")
 });
 
+/// Initialize requests refused by the rate limiter.
+///
+/// Exists because on 2026-08-28 the fleet was refused every new MCP session
+/// for hours and the server recorded nothing at all: no log line, no metric,
+/// and the outage had to be reconstructed from which requests succeeded and
+/// from the silence after them. The `bucket` label is the diagnostic — it
+/// separates one client exhausting its own quota from the shared per-subject
+/// bucket being too small for the fleet.
+pub static INITIALIZE_REJECTED_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec_with_registry!(
+        "carddav_mcp_initialize_rejected_total",
+        "Total MCP initialize requests refused by the rate limiter. \
+         Labels: bucket (subject|bearer).",
+        &["bucket"],
+        prometheus::default_registry()
+    )
+    .expect("register initialize_rejected_total once")
+});
+
 pub static INTROSPECT_LATENCY_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
     register_histogram_vec_with_registry!(
         prometheus::HistogramOpts::new(

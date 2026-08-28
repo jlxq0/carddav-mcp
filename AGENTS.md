@@ -194,6 +194,29 @@ cargo test --all-features --locked
   that fixes the ordinary path is the value that makes the bypass path
   caller-controlled, so "set it to the edge-inclusive depth" reads as complete
   and is not.
+- **`MAX_INITIALIZES_PER_IDENTITY` is reconnect headroom, not the flood
+  defence.** `session::MAX_SESSIONS` caps live sessions at 256 and is the real
+  control, so sizing the initialize burst for the fleet gives nothing away. Its
+  original comment assumed "one or two live sessions", which is a single-client
+  assumption that this deployment has never matched.
+- **Every mounting session authenticates as one Logto subject, so a per-subject
+  limit is a fleet limit.** Six distinct bearer hashes in 12 hours all carried
+  one `sub`. Raising the burst moves the cliff and does not make the limit
+  per-agent, because there is no per-agent identity to key on: that is an
+  identity problem rather than a rate-limiting one.
+- **One client connection costs two charges.** `claude-code` posts twice
+  without an `mcp-session-id` about 30 ms apart, creating two sessions, and only
+  the second reaches `Service initialized as server`. Measured 2026-08-28: 16
+  charged creates produced 5 usable sessions. Any capacity stated in
+  connections is half the number in the constant.
+- **A refused request must spend nothing.** Charging one bucket before testing
+  another turns a queue into a livelock: retries consume every refill without
+  completing a connection, and the fleet never converges. Pinned by
+  `a_refused_initialize_spends_nothing`.
+- **A rejection with no log line and no counter is invisible.** For the hours
+  the fleet was locked out, this server recorded nothing at all, and the cause
+  had to be reconstructed from which requests succeeded and from the silence
+  after them. Any refusal path needs its own counter before it needs tuning.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for

@@ -2,6 +2,37 @@
 
 This project follows semantic versioning.
 
+## [0.1.5] - 2026-08-28
+
+### Fixed
+
+- Stop the initialize rate limiter livelocking the fleet. A refused request
+  charged the per-bearer bucket before testing the per-subject bucket, so every
+  rejection still spent a token; with clients retrying, each refill was consumed
+  by a first request whose second was refused, and the bucket never reached the
+  two tokens one connection needs. `check` now charges exactly one bucket: the
+  per-subject one when the token carries a subject, the per-bearer one when it
+  does not.
+- Size the burst for this deployment. Every mounting session authenticates as
+  the same Logto subject, so the per-subject bucket is one bucket for every
+  agent at once, and one client connection costs two charges because
+  `claude-code` posts twice without an `mcp-session-id` about 30 ms apart. A
+  burst of 8 was four connections for the whole fleet. It is now 32, one
+  full-fleet restart plus a retry round, and still an eighth of `MAX_SESSIONS`.
+- Decouple the refill from `SESSION_KEEP_ALIVE`. One token per 30 minutes meant
+  recovering a single connection took an hour of total fleet silence. It is now
+  one per minute, which bounds a stolen bearer to 60 attempts an hour against a
+  live-session cap of 256.
+
+### Added
+
+- `carddav_mcp_initialize_rejected_total{bucket}` and a `warn` line on every
+  refused initialize, carrying the bucket, the token hash, the burst and the
+  replenish period. Refusals previously left no server-side record of any kind:
+  the 2026-08-28 outage had to be reconstructed from which requests succeeded
+  and from the silence after them. The `bucket` label separates one client
+  exhausting its own quota from the shared bucket being too small for the fleet.
+
 ## [0.1.4] - 2026-08-27
 
 ### Fixed

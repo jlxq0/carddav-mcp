@@ -33,7 +33,7 @@ use axum::routing::{get, post};
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tokio::net::TcpListener;
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::auth::{AccessToken, AuthState, bearer_auth};
 use crate::carddav_client::CardDavClient;
@@ -41,7 +41,9 @@ use crate::config::Config;
 use crate::logto_oidc::LogtoValidationClient;
 use crate::mcp::CardDavMcpService;
 use crate::oauth_metadata::{authorization_server_metadata, protected_resource_metadata, register};
-use crate::rate_limit::{InitializeLimiter, Limiter, MAX_INITIALIZES_PER_IDENTITY};
+use crate::rate_limit::{
+    INITIALIZE_REPLENISH, InitializeLimiter, Limiter, MAX_INITIALIZES_PER_IDENTITY,
+};
 
 /// Maximum accepted streamable-HTTP MCP request body.
 ///
@@ -129,7 +131,7 @@ fn build_router(
     );
 
     let initialize_limiter = Arc::new(InitializeLimiter::new(
-        session::SESSION_KEEP_ALIVE,
+        INITIALIZE_REPLENISH,
         MAX_INITIALIZES_PER_IDENTITY,
     ));
 
@@ -217,10 +219,22 @@ async fn initialize_rate_limit(
             .into_response();
     };
     let bearer_hash = crate::audit::token_hash(&token.0);
-    if limiter
-        .check(&bearer_hash, Some(identity.user_id.as_str()))
-        .is_err()
-    {
+    if let Err(bucket) = limiter.check(&bearer_hash, Some(identity.user_id.as_str())) {
+        // Refusing a session with no record of having done so is what made
+        // the 2026-08-28 outage take a reconstruction rather than a query.
+        // `bucket` is the whole diagnostic: `subject` means the shared
+        // per-user quota, so the limit is too small for however many clients
+        // are reconnecting; `bearer` means one token on its own.
+        crate::metrics::INITIALIZE_REJECTED_TOTAL
+            .with_label_values(&[bucket.as_str()])
+            .inc();
+        warn!(
+            bucket = bucket.as_str(),
+            token_hash = %bearer_hash,
+            burst = MAX_INITIALIZES_PER_IDENTITY,
+            replenish_secs = INITIALIZE_REPLENISH.as_secs(),
+            "refused MCP initialize: rate limit"
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
             "too many MCP initialize requests; try again later\n",
