@@ -83,6 +83,23 @@ pub const MAX_INITIALIZES_PER_IDENTITY: u32 = 32;
 /// A minute bounds a stolen bearer to 60 session attempts an hour against a
 /// live-session cap of 256 and a 30-minute idle expiry, and lets a fleet that
 /// has exhausted the burst recover inside the time it takes anyone to notice.
+///
+/// **What this costs, from cross-engine review of the change rather than from
+/// reasoning about it.** No new capability and no bypass: a single subject
+/// could always reach `MAX_SESSIONS` by holding sessions open, and for a token
+/// carrying a subject the two equal-rate buckets always drained together, so
+/// dropping the bearer charge loosens nothing. What changes is the speed.
+/// Filling the 256-session pool went from about 124 hours (8, then one per 30
+/// minutes) to about 224 minutes (32, then one per minute), a factor of 33.
+///
+/// Accepted, and the reason belongs here rather than in a commit message: it
+/// needs a valid Logto bearer, that same bearer already grants full read and
+/// write over every contact through the DAV pass-through, so filling the
+/// session pool is strictly less than what the credential already buys. The
+/// result is a temporary 503 on new sessions that drains itself at the
+/// 30-minute idle expiry. Weigh those together before lowering this further:
+/// the number that broke the fleet was chosen for an attacker who is not the
+/// binding constraint.
 pub const INITIALIZE_REPLENISH: Duration = Duration::from_secs(60);
 /// Maximum identities retained in any one rate-limit map.
 const MAX_BUCKETS_PER_MAP: usize = 4096;
