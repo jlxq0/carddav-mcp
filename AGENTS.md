@@ -217,6 +217,18 @@ cargo test --all-features --locked
   the fleet was locked out, this server recorded nothing at all, and the cause
   had to be reconstructed from which requests succeeded and from the silence
   after them. Any refusal path needs its own counter before it needs tuning.
+- **`kubectl port-forward` cannot reach this service's metrics listener and
+  reports `connection refused`.** The listener binds `POD_IP:9090`, and
+  port-forward dials `127.0.0.1` inside the pod's namespace where nothing is
+  listening. Verified 2026-08-28 against a healthy pod that Alloy was scraping
+  normally. Use the log line, query what Alloy ships to, or curl the pod IP from
+  inside the cluster; a port-forward that returns nothing is evidence about
+  port-forward.
+- The same run shows why to dry-run a check before it matters: grepping the
+  forwarded endpoint for a **new** counter returned 0, which was indistinguishable
+  from the counter being absent, because the known-good counter beside it also
+  returned nothing. Ask a check for a value you already know before asking it
+  the one you do not.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for

@@ -269,6 +269,25 @@ impl Config {
 
 /// Resolve the metrics listener bind address. Priority: explicit env →
 /// `{POD_IP}:9090` → `127.0.0.1:9090`. Never returns `0.0.0.0` by default.
+/// Bind the metrics listener to `POD_IP` when the downward API supplies one,
+/// so it is reachable in-cluster (Alloy scrapes by pod IP under the
+/// `prometheus.io/scrape` annotations) and not on the public listener.
+///
+/// **`kubectl port-forward` cannot reach it, and says `connection refused`.**
+/// Port-forward dials `127.0.0.1` *inside* the pod's network namespace, and
+/// nothing is listening there — the socket is on the pod IP. Verified
+/// 2026-08-28 against a healthy, actively scraped pod:
+///
+/// ```text
+/// failed to connect to localhost:9090 inside namespace ...
+/// dial tcp4 127.0.0.1:9090: connect: connection refused
+/// ```
+///
+/// So the obvious way to check a counter reports the listener as down while it
+/// is up and being collected. Query whatever Alloy ships to, or curl the pod IP
+/// from inside the cluster. Reading the counter is not a way to establish that
+/// the metrics endpoint works, and a scrape that returns nothing here is
+/// evidence about `port-forward` rather than about this service.
 fn resolve_metrics_bind_addr(
     explicit_addr: Option<&str>,
     pod_ip: Option<&str>,
