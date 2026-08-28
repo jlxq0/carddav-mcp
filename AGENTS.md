@@ -229,6 +229,23 @@ cargo test --all-features --locked
   from the counter being absent, because the known-good counter beside it also
   returned nothing. Ask a check for a value you already know before asking it
   the one you do not.
+- **A field acceptance of an initialize-limit change cannot discriminate here,
+  so do not try.** Three sessions in the whole fleet hold a `carddav` mount
+  (`lucy`, `mantis`, `penny`, measured 2026-08-28 from their configs and
+  confirmed by each). Three connections is six charges, under every burst this
+  service has shipped, and a pod replacement resets the buckets either way. The
+  `v0.1.5` acceptance ran clean and **would have passed on `v0.1.4` too**: zero
+  rejections means the changed code never executed. Distinguishing the versions
+  needs five simultaneous connections or a drained bucket observed recovering,
+  neither of which exists in the field. Use mutation, and say which kind of
+  evidence you have.
+- The way that happened is worth as much as the fact: **each step that made the
+  test more rigorous made it less discriminating**, and each was right on its
+  own. Insisting on simultaneous reconnects was correct against a failure mode
+  that was not the problem. Then correcting the population from an unvalidated
+  eight to a measured three was also correct, and it is what removed the only
+  condition under which the window could have failed. Ask what result would
+  falsify the check, and ask it again after every correction to the check.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
