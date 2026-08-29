@@ -265,6 +265,18 @@ cargo test --all-features --locked
   taken against `default/` alone is 366 and the tool's default answer is 374. A
   raw `addressbook-query` used to predict a tool's output has to query the same
   set the tool will.
+- **A test that reimplements a comparison tests its own copy and leaves the
+  call site uncovered.** The birthday fixture filtered with
+  `days_until(b, today) <= days` while `upcoming_birthdays` compared
+  `days_until > params.days` inline. Flipping the tool's `>` to `>=` drops a
+  birthday exactly `days` away, turns the live 30-day answer from 3 into 2, and
+  **left all 107 tests green**. The helper was thoroughly covered and the
+  decision that uses it was covered by nothing.
+- The repair is one predicate both sides call, not another test:
+  `birthday::within_window`. `days_until` is **private** so a call site cannot
+  compare against a raw day count at all — reintroducing the drift now fails to
+  compile rather than passing quietly. Extraction alone would not have done it,
+  since an inline comparison beside the predicate is still green.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for

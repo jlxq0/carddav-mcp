@@ -589,10 +589,13 @@ impl CardDavMcpService {
                         unparseable += 1;
                         continue;
                     };
-                    let days_until = birthday::days_until(&bday, today);
-                    if days_until > params.days {
+                    // The window decision lives in `birthday::within_window`
+                    // and is made nowhere else, so the fixture that pins it is
+                    // pinning this call rather than a copy of it.
+                    let Some(days_until) = birthday::within_window(&bday, today, params.days)
+                    else {
                         continue;
-                    }
+                    };
                     let next = today + chrono::Duration::days(i64::from(days_until));
                     birthdays.push(UpcomingBirthday {
                         href: contact.href,

@@ -95,8 +95,14 @@ pub fn parse_bday(value: &str) -> Option<Birthday> {
 /// `1984-03-17` asked from `1983-03-16` is 367 days away, not 1. Found by
 /// cross-engine review of this module rather than by reasoning about it, and
 /// reachable because `reference_date` is a caller-supplied parameter.
+///
+/// **Private on purpose.** `within_window` is the only way out of this module
+/// to ask whether a birthday is inside a window, so a call site cannot compare
+/// against a raw day count and drift from the predicate the fixture pins.
+/// Re-exporting this is how that drift comes back, and it is a visible change
+/// rather than a one-character one.
 #[must_use]
-pub fn days_until(birthday: &Birthday, today: NaiveDate) -> u32 {
+fn days_until(birthday: &Birthday, today: NaiveDate) -> u32 {
     let first = birthday
         .year
         .map_or_else(|| today.year(), |born| born.max(today.year()));
@@ -121,6 +127,23 @@ fn occurrence_in(birthday: &Birthday, year: i32) -> Option<NaiveDate> {
             .then(|| NaiveDate::from_ymd_opt(year, 3, 1))
             .flatten()
     })
+}
+
+/// `Some(days_until)` when this birthday falls inside a window of `days`
+/// counted from `today`, `None` otherwise. The window is inclusive at both
+/// ends: today is 0 and day `days` is inside it.
+///
+/// **This is the only place that comparison is written.** `upcoming_birthdays`
+/// calls it and so does the fixture, which is the point rather than tidiness.
+/// Before it existed the tool compared `days_until > params.days` inline and
+/// the fixture compared `days_until(..) <= days` in its own body, so the test
+/// exercised its own copy and the call site was covered by nothing: flipping
+/// the tool's `>` to `>=` dropped a birthday exactly `days` away, changed the
+/// live 30-day answer from 3 to 2, and left all 107 tests green.
+#[must_use]
+pub fn within_window(birthday: &Birthday, today: NaiveDate, days: u32) -> Option<u32> {
+    let remaining = days_until(birthday, today);
+    (remaining <= days).then_some(remaining)
 }
 
 /// The age reached at the next occurrence, or `None` when the card records no
@@ -226,11 +249,14 @@ mod tests {
         let today = day(2026, 8, 29);
         // Offsets 15, 22 and 30 from 2026-08-29, plus two well outside.
         let cards = ["--09-13", "--09-20", "--09-28", "--08-28", "1984-06-01"];
+        // Through `within_window`, the same call the tool makes. Comparing
+        // `days_until(..) <= days` here instead is what left the tool's own
+        // comparison untested.
         let within = |days: u32| {
             cards
                 .iter()
                 .filter_map(|raw| parse_bday(raw))
-                .filter(|b| days_until(b, today) <= days)
+                .filter(|b| within_window(b, today, days).is_some())
                 .count()
         };
         assert_eq!(within(30), 3);
@@ -256,6 +282,24 @@ mod tests {
         assert_eq!(
             days_until(&parse_bday("--03-17").unwrap(), day(1983, 3, 16)),
             1
+        );
+    }
+
+    /// The window edge, asserted on the predicate the tool actually calls
+    /// rather than on `days_until` alone. Both neighbours of the boundary are
+    /// here, so neither `<` nor `<=` can be substituted without a failure.
+    #[test]
+    fn within_window_includes_the_last_day_and_excludes_the_next() {
+        let today = day(2026, 8, 29);
+        let at_14 = parse_bday("--09-12").unwrap();
+        let at_15 = parse_bday("--09-13").unwrap();
+        assert_eq!(within_window(&at_14, today, 14), Some(14));
+        assert_eq!(within_window(&at_15, today, 14), None);
+        assert_eq!(within_window(&at_15, today, 15), Some(15));
+        // Today itself is inside even a zero-day window.
+        assert_eq!(
+            within_window(&parse_bday("--08-29").unwrap(), today, 0),
+            Some(0)
         );
     }
 
