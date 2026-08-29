@@ -2,6 +2,26 @@
 
 This project follows semantic versioning.
 
+## [0.1.6] - 2026-08-29
+
+### Added
+
+- `upcoming_birthdays`: contacts whose birthday falls within the next N days,
+  across one or all address books, in **one call**. Answering this by paging
+  `list_contacts` and parsing vCards cost four calls and 5.39 MB of vCard for a
+  one-line question, because the address book holds 366 cards against a limit of
+  100. The window is inclusive at both ends, today is day 0, and results are
+  sorted by days remaining.
+- `birthday` on `ContactSummary`, so a caller never parses a vCard for one date.
+
+### Fixed
+
+- `BDAY` was parsed nowhere in the service. `parse_vcard` now reads it, and
+  `birthday.rs` handles every ISO form vCard 3.0 and 4.0 permit: `YYYY-MM-DD`,
+  `YYYYMMDD`, `--MM-DD`, `--MMDD`, each with an optional discarded time part. A
+  value it cannot parse is skipped and counted in `unparseable_birthdays` rather
+  than failing the call.
+
 ## [0.1.5] - 2026-08-28
 
 ### Fixed
