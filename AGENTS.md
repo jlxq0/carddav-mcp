@@ -247,6 +247,24 @@ cargo test --all-features --locked
   eight to a measured three was also correct, and it is what removed the only
   condition under which the window could have failed. Ask what result would
   falsify the check, and ask it again after every correction to the check.
+- **A client that connected before a rollout advertises the old tool list until
+  something forces it to reconnect**, and `ToolSearch` finding nothing is
+  indistinguishable from a tool that was never shipped. Measured 2026-08-29 on
+  the `v0.1.6` rollout: `upcoming_birthdays` was missing from a mounting
+  session's tool list twice, and appeared immediately after any call on that
+  mount re-initialized it. **Have the session make one call first, then look
+  again**, before reporting a new tool absent. A correct deployment reads as a
+  negative result otherwise.
+- **Ask a log for a field name you have already seen before concluding a field
+  is absent.** The tool audit writes `event="tool_call"` with `method=<tool>`,
+  not `tool=<tool>`. Grepping for `"tool":` returned zero on a pod that had just
+  served the call, which is the same silence as a tool never having run. Two of
+  the three checks written in this repo on 2026-08-28 and 29 failed this way.
+- **`contacts_scanned` counts every address book unless one is named.** This
+  service has two (`Contacts`, 366 cards, and `Trusted Senders`, 8), so a count
+  taken against `default/` alone is 366 and the tool's default answer is 374. A
+  raw `addressbook-query` used to predict a tool's output has to query the same
+  set the tool will.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
