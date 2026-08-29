@@ -13,6 +13,7 @@ The public MCP endpoint is `https://your-host.example/mcp`.
 - `list_address_books`
 - `list_contacts`
 - `search_contacts`
+- `upcoming_birthdays`
 - `create_contact`
 - `update_contact`
 - `delete_contact`

@@ -33,6 +33,7 @@ CARDDAV_MCP_DCR_CLIENT_ID=<your-dcr-client-id>
 - `whoami`
 - list address books
 - list/search contacts
+- upcoming birthdays
 - create / update / delete contacts
 
 Keep the HTTP/OAuth/session/Dockerfile/CI identical in shape; only the backend

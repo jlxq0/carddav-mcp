@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
+use chrono::{NaiveDate, Utc};
 use rand::RngCore as _;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -19,11 +20,15 @@ use tracing::{Instrument as _, Span};
 
 use crate::audit::{self, outcome};
 use crate::auth::AccessToken;
+use crate::birthday;
 use crate::carddav_client::{CardDavClient, CardDavError, DavContact};
 use crate::logto_oidc::{AuthenticatedIdentity, LogtoValidationClient};
 use crate::rate_limit::{Category, Limiter};
 
 const MAX_CONTACT_LIMIT: usize = 100;
+/// Widest birthday window. A year covers every card exactly once, so anything
+/// larger would repeat rather than reveal.
+const MAX_BIRTHDAY_DAYS: u32 = 366;
 const MAX_VCARD_BYTES: usize = 256 * 1024;
 const MAX_CONTACT_FIELD_BYTES: usize = 4096;
 const MAX_NOTE_BYTES: usize = 64 * 1024;
@@ -245,9 +250,66 @@ pub struct ContactSummary {
     pub organization: Option<String>,
     pub title: Option<String>,
     pub note: Option<String>,
+    /// `BDAY` as the card stores it. Present so a caller never parses a vCard
+    /// for one date; see `upcoming_birthdays` for the window query, which is
+    /// what turns four paged calls into one.
+    pub birthday: Option<String>,
     pub has_photo: bool,
     /// Original vCard, retained so callers can inspect fields outside the common summary.
     pub vcard: String,
+}
+
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+pub struct UpcomingBirthdaysParams {
+    /// Days ahead to include. Today is day 0 and the last day is included, so
+    /// 14 covers today plus the next fourteen days. Defaults to 14, capped at 366.
+    #[serde(default = "default_birthday_days")]
+    pub days: u32,
+    /// Optional address-book href. Omit to search every address book.
+    #[serde(default)]
+    pub addressbook_href: Option<String>,
+    /// Reference date as `YYYY-MM-DD`. Omit for today in UTC. Supply it to ask
+    /// from a local calendar date, and to get a reproducible answer.
+    #[serde(default)]
+    pub reference_date: Option<String>,
+}
+
+const fn default_birthday_days() -> u32 {
+    14
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct UpcomingBirthday {
+    pub href: String,
+    pub uid: Option<String>,
+    pub full_name: Option<String>,
+    /// `BDAY` exactly as the card stores it.
+    pub birthday: String,
+    /// `MM-DD`, which is the part that recurs.
+    pub month_day: String,
+    /// 0 on the day itself.
+    pub days_until: u32,
+    /// The date it next falls on, `YYYY-MM-DD`, so a caller need not repeat the
+    /// leap-day reasoning.
+    pub next_occurrence: String,
+    /// Age reached at that occurrence, absent when the card records no year.
+    /// Absence means unknown; it never means zero.
+    pub turning: Option<i32>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct UpcomingBirthdaysResult {
+    /// Sorted by `days_until`, then by name.
+    pub birthdays: Vec<UpcomingBirthday>,
+    /// The date the window was measured from, resolved.
+    pub reference_date: String,
+    pub days: u32,
+    /// Cards examined across every address book searched.
+    pub contacts_scanned: usize,
+    /// Cards carrying a `BDAY` this server could not parse. They are omitted
+    /// from `birthdays` rather than failing the call, so a non-zero count here
+    /// is the only signal that the answer is incomplete.
+    pub unparseable_birthdays: usize,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -453,6 +515,118 @@ impl CardDavMcpService {
             "list_contacts",
             &user,
             Some(&resource),
+            started,
+            count,
+            &span,
+            &result,
+        );
+        result
+    }
+
+    #[tool(
+        description = "List contacts whose birthday falls within the next N days, across one or all address books. One call; do not page list_contacts and parse vCards for this.",
+        annotations(
+            title = "Upcoming birthdays",
+            read_only_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn upcoming_birthdays(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(params): Parameters<UpcomingBirthdaysParams>,
+    ) -> Result<rmcp::model::CallToolResult, ErrorData> {
+        let started = Instant::now();
+        let user = identity_from_ctx(&ctx)
+            .and_then(|identity| identity.email)
+            .unwrap_or_default();
+        let resource = params.addressbook_href.clone();
+        let span = make_tool_span("upcoming_birthdays", &user, resource.as_deref());
+        let mut count = None;
+        let mut result = async {
+            self.rate_limit_check(&ctx, Category::Read)?;
+            if params.days == 0 || params.days > MAX_BIRTHDAY_DAYS {
+                return Err(ErrorData::invalid_params(
+                    format!("`days` must be between 1 and {MAX_BIRTHDAY_DAYS}"),
+                    None,
+                ));
+            }
+            let today = match &params.reference_date {
+                Some(raw) => NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d").map_err(|_| {
+                    ErrorData::invalid_params("`reference_date` must be YYYY-MM-DD", None)
+                })?,
+                None => Utc::now().date_naive(),
+            };
+            let token = token_from_ctx(&ctx).ok_or_else(missing_token_err)?;
+            let hrefs = if let Some(href) = &params.addressbook_href {
+                vec![href.clone()]
+            } else {
+                self.carddav
+                    .list_address_books(&token.0)
+                    .await
+                    .map_err(map_carddav_err)?
+                    .into_iter()
+                    .map(|book| book.href)
+                    .collect()
+            };
+
+            let mut birthdays = Vec::new();
+            let mut scanned = 0usize;
+            let mut unparseable = 0usize;
+            for href in hrefs {
+                let contacts = self
+                    .carddav
+                    .list_contacts(&token.0, &href)
+                    .await
+                    .map_err(map_carddav_err)?;
+                for contact in contacts {
+                    scanned += 1;
+                    let parsed = parse_vcard(&contact.vcard);
+                    let Some(raw) = parsed.birthday else {
+                        continue;
+                    };
+                    let Some(bday) = birthday::parse_bday(&raw) else {
+                        unparseable += 1;
+                        continue;
+                    };
+                    let days_until = birthday::days_until(&bday, today);
+                    if days_until > params.days {
+                        continue;
+                    }
+                    let next = today + chrono::Duration::days(i64::from(days_until));
+                    birthdays.push(UpcomingBirthday {
+                        href: contact.href,
+                        uid: parsed.uid,
+                        full_name: parsed.full_name,
+                        month_day: format!("{:02}-{:02}", bday.month, bday.day),
+                        birthday: bday.raw.clone(),
+                        days_until,
+                        next_occurrence: next.format("%Y-%m-%d").to_string(),
+                        turning: birthday::turning(&bday, today),
+                    });
+                }
+            }
+            birthdays.sort_by(|a, b| {
+                a.days_until
+                    .cmp(&b.days_until)
+                    .then_with(|| a.full_name.cmp(&b.full_name))
+            });
+            count = Some(birthdays.len());
+            structured_result(&UpcomingBirthdaysResult {
+                birthdays,
+                reference_date: today.format("%Y-%m-%d").to_string(),
+                days: params.days,
+                contacts_scanned: scanned,
+                unparseable_birthdays: unparseable,
+            })
+        }
+        .instrument(span.clone())
+        .await;
+        self.react_to_auth_expiry(&ctx, &mut result).await;
+        emit_tool_audit(
+            "upcoming_birthdays",
+            &user,
+            resource.as_deref(),
             started,
             count,
             &span,
@@ -758,6 +932,7 @@ fn contact_summary(contact: DavContact) -> ContactSummary {
         organization: parsed.organization,
         title: parsed.title,
         note: parsed.note,
+        birthday: parsed.birthday,
         has_photo: parsed.has_photo,
         vcard: contact.vcard,
     }
@@ -774,6 +949,7 @@ struct ParsedVcard {
     organization: Option<String>,
     title: Option<String>,
     note: Option<String>,
+    birthday: Option<String>,
     has_photo: bool,
 }
 
@@ -811,6 +987,7 @@ fn parse_vcard(vcard: &str) -> ParsedVcard {
             }
             "TITLE" => parsed.title = Some(value),
             "NOTE" => parsed.note = Some(value),
+            "BDAY" => parsed.birthday = Some(value),
             "PHOTO" => parsed.has_photo = true,
             _ => {}
         }

@@ -6,6 +6,7 @@
 
 mod audit;
 mod auth;
+mod birthday;
 mod carddav_client;
 mod config;
 mod last_used;

@@ -1,6 +1,6 @@
 [package]
 name = "carddav-mcp"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.93"
 description = "Remote MCP server exposing Stalwart CardDAV address books over streamable HTTP"
@@ -36,6 +36,12 @@ thiserror = "2.0"
 # rustls-only HTTP client for CardDAV calls to Stalwart and the JWKS fetch
 # from Logto.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# Civil-date arithmetic for the birthday window: next occurrence of a MM-DD,
+# and the leap-day case. Already in the tree via iana-time-zone consumers, so
+# this adds no crate. `clock` is the only feature needed (UTC today when the
+# caller supplies no reference date); `default-features = false` drops the
+# localtime and oldtime surface.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # SHA-256 of access tokens for cache keys — never store the raw token as a key.
 sha2 = "0.10"
 # Constant-time scheme comparison in the bearer extractor.
