@@ -287,12 +287,31 @@ cargo test --all-features --locked
   `clusters/fondue/carddav-mcp` pins as `tag@digest`. Neither child digest
   appears anywhere a pod or a manifest reports, so comparing against one of them
   produces a confident mismatch on a correctly deployed image.
+- **`mergeable: true` from the pull-request API plus `HTTP 405` on the merge is
+  not branch protection.** That field is recomputed asynchronously, so one
+  sample cannot separate *no conflict* from *not looked at yet* from *behind
+  `main`*. Measured 2026-09-01: #31 reported `mergeable: true` and its merge
+  returned 405 seconds after #32 moved `main`; a retry succeeded, so it was a
+  transient recompute. Somebody reading those two together will go looking at
+  the protection rule, which is the wrong file.
+- Ask git instead, deterministically and once each:
+  `git merge-tree --write-tree origin/main <head>` (rc=0 means no conflict) and
+  `git merge-base --is-ancestor <head> origin/main` (behind, or not). Those two
+  answers are what `mergeable` conflates.
 - **Pull requests are gated by the director before merge**, agreed 2026-08-29
   after a surviving mutation reached production. The exception is an incident,
   meaning something currently broken for a user or the fleet: ship it, **leave
   the PR open**, and send one line saying it was an incident and what was
   broken. A defect found in review or by a mutation is not an incident however
   real. Closing an unreviewed incident fix is what turns a debt into a fact.
+- **A change that cannot alter behaviour ships without the gate**, ruled
+  2026-09-01. The case that settled it was removing a real infrastructure
+  address from public prose: it touches no code path and no value anything
+  reads, so it is risk-reducing whoever asks and **no authorisation is
+  required** — which is a different claim from having been authorised. A relay
+  carrying an approval for *add a redirect URI* would not have been enough,
+  because that alters behaviour. The test is the question, not the category:
+  could this change alter behaviour? No ships, yes is ordinary and gated.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
