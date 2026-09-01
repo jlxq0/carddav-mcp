@@ -277,6 +277,22 @@ cargo test --all-features --locked
   compare against a raw day count at all — reintroducing the drift now fails to
   compile rather than passing quietly. Extraction alone would not have done it,
   since an inline comparison beside the predicate is still green.
+- **This image is single-platform, and it is still an index.** Measured on
+  `v0.1.6`: the OCI index holds `linux/amd64` plus one `unknown/unknown`
+  attestation manifest, so `docker manifest inspect -v` returns an **array**
+  because of the attestation rather than because of architectures. Do not read
+  that array as multi-arch; there is no arm64 image, which is #10.
+- **The index digest is what answers.** The pod's `imageID`
+  (`sha256:7ecc9b4d…` for `v0.1.6`) is the index digest, and it is exactly what
+  `clusters/fondue/carddav-mcp` pins as `tag@digest`. Neither child digest
+  appears anywhere a pod or a manifest reports, so comparing against one of them
+  produces a confident mismatch on a correctly deployed image.
+- **Pull requests are gated by the director before merge**, agreed 2026-08-29
+  after a surviving mutation reached production. The exception is an incident,
+  meaning something currently broken for a user or the fleet: ship it, **leave
+  the PR open**, and send one line saying it was an incident and what was
+  broken. A defect found in review or by a mutation is not an incident however
+  real. Closing an unreviewed incident fix is what turns a debt into a fact.
 - Loopback redirect URIs cannot be matched by exact string equality. A native
   client binds a random ephemeral port per session, and RFC 8252 §7.3 requires
   the server to accept any port for a loopback entry. Relax the port only for
