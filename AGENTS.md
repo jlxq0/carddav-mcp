@@ -294,6 +294,25 @@ cargo test --all-features --locked
   returned 405 seconds after #32 moved `main`; a retry succeeded, so it was a
   transient recompute. Somebody reading those two together will go looking at
   the protection rule, which is the wrong file.
+- **The same fault reaches GitHub's own API.** Measured 2026-09-01 seconds
+  apart on this repository: `/commits/main` returned `477c92a0` while
+  `/commits?per_page=3` returned `ade7ad30`, the single-ref endpoint serving a
+  cached head. That nearly produced a report that this repository's mirror was
+  lagging when it had fired three seconds after the merge. Minutes later all
+  three of `/commits/main`, `/commits?per_page=3` and `/git/refs/heads/main`
+  agreed, so it is transient and cannot be reproduced on demand, which is
+  precisely why it is written down.
+- **When comparing content across the mirror, compare content and not shas.** A
+  count of the value being removed is what says the read reached the new
+  material: a stale mirror shows the old count, not zero, whereas a missing
+  file, an empty body and a lagging fetch all show zero. Ask for a value you
+  expect to be present in the same fetch.
+- **`curl -w` output is part of the stream you then count.** Reading a file with
+  `-w "\nHTTP %{http_code}"` and counting lines with `grep -c ''` reported 535
+  and 286 lines against the true 533 and 284, because the write-out adds a blank
+  line and a status line to the body. Two independent counts differed by exactly
+  2 in both files and the cause was the instrument rather than a merge landing
+  between them. Capture the body and the status separately.
 - Ask git instead, deterministically and once each:
   `git merge-tree --write-tree origin/main <head>` (rc=0 means no conflict) and
   `git merge-base --is-ancestor <head> origin/main` (behind, or not). Those two
