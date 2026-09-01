@@ -187,7 +187,7 @@ cargo test --all-features --locked
   skips the edge has a real chain depth of 1 and can forge the leftmost
   `X-Forwarded-For` entry. Today it costs code running inside the cluster:
   measured 2026-08-27, the gateway answers 401 from a pod and times out from
-  the house LAN, because MetalLB advertises `203.24.209.5/32` over BGP to `sgp`,
+  the house LAN, because MetalLB advertises `203.0.113.20/32` over BGP to `sgp`,
   `lax` and `zrh` while the L2 pool is a different address.
 - **If that ever changes, 2 is worse than 1 rather than merely wrong.** A hop
   count of 1 selects an infrastructure address, incorrect and inert. A hop
