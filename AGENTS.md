@@ -188,7 +188,10 @@ cargo test --all-features --locked
   `X-Forwarded-For` entry. Today it costs code running inside the cluster:
   measured 2026-08-27, the gateway answers 401 from a pod and times out from
   the house LAN, because MetalLB advertises `203.0.113.20/32` over BGP to `sgp`,
-  `lax` and `zrh` while the L2 pool is a different address.
+  `lax` and `zrh` while the L2 pool is a different address. **`203.0.113.20` is
+  a stand-in**, RFC 5737 documentation space rather than the real gateway
+  address: it answers nothing, its last octet means nothing, and no conclusion
+  here depends on its value. The measurements are real and the address is not.
 - **If that ever changes, 2 is worse than 1 rather than merely wrong.** A hop
   count of 1 selects an infrastructure address, incorrect and inert. A hop
   count of 2 on a one-deep chain selects whatever the caller typed. The value

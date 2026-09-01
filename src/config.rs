@@ -96,6 +96,12 @@ const DEFAULT_DAV_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 /// their own `X-Forwarded-For` becomes the leftmost of two entries and this
 /// hop count selects it, putting a forged address in the audit field.
 ///
+/// `203.0.113.20` here and below is a stand-in. The real gateway address is
+/// not published, and this one is RFC 5737 documentation space, so it answers
+/// nothing and no conclusion below depends on its value. **The measurements
+/// are real and the address is not**; do not try to reach it, and do not read
+/// the last octet as meaningful.
+///
 /// It costs a stolen bearer **plus code running inside the cluster**, measured
 /// 2026-08-27 rather than assumed: from a pod, `203.0.113.20` and its v6
 /// address answer 401; from a machine on the house LAN both time out after 8 s
