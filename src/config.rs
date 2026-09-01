@@ -97,11 +97,11 @@ const DEFAULT_DAV_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 /// hop count selects it, putting a forged address in the audit field.
 ///
 /// It costs a stolen bearer **plus code running inside the cluster**, measured
-/// 2026-08-27 rather than assumed: from a pod, `203.24.209.5` and its v6
+/// 2026-08-27 rather than assumed: from a pod, `203.0.113.20` and its v6
 /// address answer 401; from a machine on the house LAN both time out after 8 s
 /// on ports 80 and 443, while `https://carddav.kampong.social/` answers 401
 /// from the same machine as a control. The reason is `MetalLB`: the `fondue`
-/// pool holding `203.24.209.5/32` is a `BGPAdvertisement` peered across `sgp`,
+/// pool holding `203.0.113.20/32` is a `BGPAdvertisement` peered across `sgp`,
 /// `lax` and `zrh`, and the L2 pool is a different address on `home-lan`, so
 /// a laptop on the wifi has no route to the gateway at all. At the point where
 /// someone runs code in this cluster, a forged provenance field is far from
